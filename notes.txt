@@ -1,0 +1,88 @@
+Before Task 2: The bigger picture
+Task 1 taught you:
+User
+ |
+ v
+Codex CLI
+ |
+ v
+MCP Protocol
+ |
+ v
+Python function
+ |
+ v
+NumPy processing
+ |
+ v
+Output file
+The important concept:
+MCP is not the AI.
+MCP is the standardized bridge that lets an AI agent interact with external tools.
+Task 2 preview
+Task 2 is where the challenge starts becoming more "agentic".
+Task 1:
+"Give the agent one tool."
+
+Task 2:
+"Give the agent the ability to analyze results."
+
+You will probably add a tool that extracts statistics from the segmented CT data, such as:
+volume fraction
+number of connected components
+voxel statistics
+geometric information
+The workflow becomes:
+Codex
+ |
+ +---- segment_ct_dataset()
+ |
+ +---- analyze_segmentation()
+ |
+ +---- generate_report()
+The agent starts chaining tools together.
+
+
+Questions scientists want answers too ->
+
+They want answers like:
+How much of the material exists?
+What percentage of the volume is occupied?
+How many disconnected structures are there?
+What is the geometry of the material?
+
+
+
+
+TASK 3: 
+got this output after task 3,
+Completed the full pipeline using threshold 0.005.
+
+   Output                                               Shape                  Foreground/nonzero count
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  ━━━━━━━━━━━━━━━━━━━━  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   data/unitcell/unitcell_segmented.npy       (256, 256, 256)                            721,774 voxels
+  ──────────────────────────────────────  ────────────────────  ────────────────────────────────────────
+   data/unitcell/slice_128.png             (256, 256, 4) RGBA    7,314 foreground pixels / 65,536 total
+  ──────────────────────────────────────  ────────────────────  ────────────────────────────────────────
+   data/unitcell/unitcell_skeleton.npy        (256, 256, 256)                      3,173 nonzero voxels
+
+  The slice foreground-pixel count matches the segmented mask’s axis-0 slice at index 128.
+
+
+  and the prompt I used for this is, 
+  
+  "Using the segmentation-tools MCP server, process the CT dataset at
+  data/unitcell/unitcell.npy through the full pipeline: segmentation,
+  slice visualization, and skeletonization.
+ 
+  Requirements:
+  - Segment the raw CT data using a threshold of 0.005.
+  - Save the segmented mask to data/unitcell/unitcell_segmented.npy.
+  - Visualize slice index 128 along axis 0 of the segmented mask, and
+    save the image to data/unitcell/slice_128.png.
+  - Skeletonize the segmented mask and save the result to
+    data/unitcell/unitcell_skeleton.npy.
+  - Run these steps in whatever order is logically required — do not
+    ask me to specify the order.
+  - After completing all steps, report the shape and voxel/pixel count
+    summary of each output file you produced."
