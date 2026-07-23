@@ -1,29 +1,8 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useMemo } from 'react';
 import { Sphere } from '@react-three/drei';
 
-export default function MiniLattice() {
-  const [latticeData, setLatticeData] = useState(null);
-  const [defectsData, setDefectsData] = useState(null);
-  const [isLoading, setIsLoading] = useState(true);
-
-  // 1. Fetch BOTH the Lattice Graph and the Defects List
-  useEffect(() => {
-    Promise.all([
-      fetch('http://localhost:8000/api/lattice-graph').then(res => res.json()),
-      fetch('http://localhost:8000/api/analyze-defects').then(res => res.json())
-    ])
-    .then(([lattice, defects]) => {
-      setLatticeData(lattice);
-      setDefectsData(defects);
-      setIsLoading(false);
-    })
-    .catch((err) => {
-      console.error("Error fetching data:", err);
-      setIsLoading(false);
-    });
-  }, []);
-
-  // 2. High-Performance Array Splitting
+export default function MiniLattice({ latticeData, defectsData }) {
+  // 1. High-Performance Array Splitting
   const { healthyPositions, defectivePositions } = useMemo(() => {
     if (!latticeData || !defectsData) return { healthyPositions: null, defectivePositions: null };
 
@@ -36,7 +15,11 @@ export default function MiniLattice() {
     
     const junctionMap = {};
     latticeData.junctions.forEach((j) => {
-      junctionMap[j.id] = [j.position[0] * scale, j.position[1] * scale, j.position[2] * scale];
+      junctionMap[j.id] = [
+        j.position[0] * scale, 
+        j.position[1] * scale, 
+        j.position[2] * scale
+      ];
     });
 
     // Split the struts based on whether their ID is in the defective Set
@@ -59,7 +42,8 @@ export default function MiniLattice() {
     };
   }, [latticeData, defectsData]);
 
-  if (isLoading) {
+  // 2. Loading Check (displays yellow wireframe until App.jsx finishes fetching)
+  if (!latticeData || !defectsData) {
     return (
       <mesh>
         <boxGeometry args={[2, 2, 2]} />
@@ -74,11 +58,15 @@ export default function MiniLattice() {
   return (
     <group position={[-10, -10, -3]}> 
       
-      {/* 3. Render Nodes */}
+      {/* 3. Render Nodes (Junctions) */}
       {latticeData.junctions.map((junction) => (
         <Sphere 
           key={`junction-${junction.id}`} 
-          position={[junction.position[0] * scale, junction.position[1] * scale, junction.position[2] * scale]} 
+          position={[
+            junction.position[0] * scale, 
+            junction.position[1] * scale, 
+            junction.position[2] * scale
+          ]} 
           args={[nodeRadius, 6, 6]}
         >
           <meshStandardMaterial color="#555555" />
@@ -111,7 +99,6 @@ export default function MiniLattice() {
               itemSize={3}
             />
           </bufferGeometry>
-          {/* We use a glowing red color so they pop out! */}
           <lineBasicMaterial color="#ff0000" linewidth={3} />
         </lineSegments>
       )}
