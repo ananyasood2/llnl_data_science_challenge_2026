@@ -1,8 +1,7 @@
 import json
 from pathlib import Path
-import random
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 
@@ -26,6 +25,14 @@ JSON_PATH = (
     / "210127_Brian_Tran_strut_lattices_0point5dash1 1 Slices.json"
 )
 
+DEFECTS_PATH = (
+    Path(__file__).resolve().parent
+    / "data"
+    / "missing_struts"
+    / "segmentation"
+    / "defects.json"
+)
+
 
 @app.get("/api/lattice-graph")
 def get_lattice_graph():
@@ -39,26 +46,18 @@ def get_lattice_graph():
 
 @app.get("/api/analyze-defects")
 def analyze_defects():
-    """
-    Simulates the NDE graph-diff logic. 
-    Eventually, this will trigger the agent to compare the CT scan to the blueprint.
-    For now, it returns a simulated payload of missing strut IDs.
-    """
-    
-    # To test the UI, let's randomly flag exactly 125 struts as "missing" 
-    # This roughly simulates our 0.5% defect dataset!
-    # (Assuming there are roughly 25,000 struts in the file, we pick 125 random IDs)
-    defective_ids = random.sample(range(0, 25000), 125)
-    
-    # We will also hardcode the very first few struts so you have a predictable cluster to look at
-    defective_ids.extend([0, 1, 2, 3, 4, 5])
-    
-    return {
-        "status": "Analysis Complete",
-        "summary": {
-            "total_expected_struts": 25000, 
-            "missing_defects_count": len(defective_ids),
-            "defect_percentage": "0.53%"
-        },
-        "defective_strut_ids": defective_ids
-    }
+    """Serve the latest strut-evaluation results to the React dashboard."""
+    if not DEFECTS_PATH.exists():
+        raise HTTPException(
+            status_code=404,
+            detail="defects.json not found. Run evaluate_registered_struts first.",
+        )
+
+    try:
+        with DEFECTS_PATH.open("r", encoding="utf-8") as file:
+            return json.load(file)
+    except json.JSONDecodeError as error:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Invalid defects.json: {error}",
+        ) from error
