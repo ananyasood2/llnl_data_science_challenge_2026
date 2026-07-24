@@ -1,37 +1,31 @@
 import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
-import { useRef, useEffect, useState } from 'react';
+import { useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import MiniLattice from './MiniLattice';
 
 // NEW: A helper component that hooks into the render loop to move the camera
-function CameraAnimator({ latticeData, focusedDefectId, controlsRef }) {
-  const [targetPoint, setTargetPoint] = useState(null);
+function CameraAnimator({ latticeData, selectedStrutId, controlsRef }) {
+  const targetPoint = useMemo(() => {
+    if (selectedStrutId === null || !latticeData) return null;
 
-  useEffect(() => {
-    if (focusedDefectId !== null && latticeData) {
-      // 1. Find the specific strut in the JSON data
-      const strut = latticeData.struts.find(s => s.id === focusedDefectId);
-      if (strut) {
-        // 2. Find its two connecting nodes
-        const j0 = latticeData.junctions.find(j => j.id === strut.junction0);
-        const j1 = latticeData.junctions.find(j => j.id === strut.junction1);
+    const strut = latticeData.struts.find((item) => item.id === selectedStrutId);
+    if (!strut) return null;
 
-        if (j0 && j1) {
-          const scale = 0.1;
-          // IMPORTANT: We must include the same offset we used in MiniLattice's <group> tag
-          const offsetX = -10, offsetY = -10, offsetZ = -3; 
+    const j0 = latticeData.junctions.find((junction) => junction.id === strut.junction0);
+    const j1 = latticeData.junctions.find((junction) => junction.id === strut.junction1);
+    if (!j0 || !j1) return null;
 
-          // 3. Calculate the exact midpoint of the missing strut in world coordinates
-          const midX = (((j0.position[0] + j1.position[0]) / 2) * scale) + offsetX;
-          const midY = (((j0.position[1] + j1.position[1]) / 2) * scale) + offsetY;
-          const midZ = (((j0.position[2] + j1.position[2]) / 2) * scale) + offsetZ;
-
-          setTargetPoint(new THREE.Vector3(midX, midY, midZ));
-        }
-      }
-    }
-  }, [focusedDefectId, latticeData]);
+    const scale = 0.1;
+    const offsetX = -10;
+    const offsetY = -10;
+    const offsetZ = -3;
+    return new THREE.Vector3(
+      ((j0.position[0] + j1.position[0]) / 2) * scale + offsetX,
+      ((j0.position[1] + j1.position[1]) / 2) * scale + offsetY,
+      ((j0.position[2] + j1.position[2]) / 2) * scale + offsetZ,
+    );
+  }, [selectedStrutId, latticeData]);
 
   // 4. Hook into the 3D rendering loop to animate the transition smoothly
   useFrame((state) => {
@@ -50,12 +44,12 @@ function CameraAnimator({ latticeData, focusedDefectId, controlsRef }) {
   return null;
 }
 
-export default function LatticeViewer({ latticeData, defectsData, focusedDefectId }) {
+export default function LatticeViewer({ latticeData, defectsData, selectedStrutId }) {
   // We create a reference to the controls so our CameraAnimator can hijack them
   const controlsRef = useRef();
 
   return (
-    <div style={{ height: '100%', width: '100%' }}>
+    <div style={{ height: '100%', position: 'relative', width: '100%' }}>
       <Canvas camera={{ position: [5, 5, 5], fov: 50 }}>
         <ambientLight intensity={0.5} />
         <directionalLight position={[10, 10, 10]} intensity={1} />
@@ -68,10 +62,29 @@ export default function LatticeViewer({ latticeData, defectsData, focusedDefectI
         {/* Mount our new animator component */}
         <CameraAnimator 
           latticeData={latticeData} 
-          focusedDefectId={focusedDefectId} 
+          selectedStrutId={selectedStrutId}
           controlsRef={controlsRef} 
         />
       </Canvas>
+      {selectedStrutId !== null && selectedStrutId !== undefined && (
+        <div
+          style={{
+            position: 'absolute',
+            top: '16px',
+            left: '16px',
+            background: 'rgba(15, 23, 42, 0.86)',
+            border: '1px solid #62d5c5',
+            borderRadius: '6px',
+            color: '#e6fffb',
+            fontSize: '0.9rem',
+            fontWeight: 700,
+            padding: '8px 10px',
+            pointerEvents: 'none',
+          }}
+        >
+          Selected strut #{selectedStrutId}
+        </div>
+      )}
     </div>
   );
 }

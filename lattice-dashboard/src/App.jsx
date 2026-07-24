@@ -6,8 +6,7 @@ function App() {
   const [latticeData, setLatticeData] = useState(null);
   const [defectsData, setDefectsData] = useState(null);
   
-  // NEW: State to track which defect the user wants to look at
-  const [focusedDefectId, setFocusedDefectId] = useState(null);
+  const [selectedStrutId, setSelectedStrutId] = useState(null);
 
   useEffect(() => {
     Promise.all([
@@ -24,19 +23,18 @@ function App() {
   return (
     <div style={{ display: 'flex', width: '100vw', height: '100vh', backgroundColor: '#1a1a1a', color: 'white' }}>
       <div style={{ flex: 3, position: 'relative' }}>
-        {/* Pass the focused ID down to the viewer */}
         <LatticeViewer 
           latticeData={latticeData} 
           defectsData={defectsData} 
-          focusedDefectId={focusedDefectId} 
+          selectedStrutId={selectedStrutId}
         />
       </div>
 
       <div style={{ flex: 1, backgroundColor: '#222', borderLeft: '2px solid #333', overflowY: 'auto' }}>
-        {/* Pass the setter function down so buttons can update the state */}
         <SidePanel 
           defectsData={defectsData} 
-          setFocusedDefectId={setFocusedDefectId} 
+          selectedStrutId={selectedStrutId}
+          setSelectedStrutId={setSelectedStrutId}
         />
       </div>
     </div>
