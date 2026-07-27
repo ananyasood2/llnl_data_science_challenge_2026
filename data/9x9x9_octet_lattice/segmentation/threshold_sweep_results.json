@@ -1,0 +1,65 @@
+[
+  {
+    "threshold": 33000,
+    "rendered_ssim": 0.8422285583219359,
+    "plot_area_foreground_iou": 0.24603772006858193,
+    "plot_area_foreground_f1": 0.39491215411206015,
+    "slice_foreground_voxels": 136121
+  },
+  {
+    "threshold": 36000,
+    "rendered_ssim": 0.9286725005225853,
+    "plot_area_foreground_iou": 0.539160774951795,
+    "plot_area_foreground_f1": 0.700590586410547,
+    "slice_foreground_voxels": 62093
+  },
+  {
+    "threshold": 39000,
+    "rendered_ssim": 0.9685165334203525,
+    "plot_area_foreground_iou": 0.7867155032753399,
+    "plot_area_foreground_f1": 0.8806276117637782,
+    "slice_foreground_voxels": 38707
+  },
+  {
+    "threshold": 42000,
+    "rendered_ssim": 0.9659493293066723,
+    "plot_area_foreground_iou": 0.7669894876251966,
+    "plot_area_foreground_f1": 0.8681313533517591,
+    "slice_foreground_voxels": 27243
+  },
+  {
+    "threshold": 45000,
+    "rendered_ssim": 0.9556252538142386,
+    "plot_area_foreground_iou": 0.6292211097912778,
+    "plot_area_foreground_f1": 0.7724195396312883,
+    "slice_foreground_voxels": 21146
+  },
+  {
+    "threshold": 48000,
+    "rendered_ssim": 0.9471591490390856,
+    "plot_area_foreground_iou": 0.5039517294127646,
+    "plot_area_foreground_f1": 0.6701700853251964,
+    "slice_foreground_voxels": 16900
+  },
+  {
+    "threshold": 51000,
+    "rendered_ssim": 0.9398624562519632,
+    "plot_area_foreground_iou": 0.3856547973145237,
+    "plot_area_foreground_f1": 0.5566390677706226,
+    "slice_foreground_voxels": 12877
+  },
+  {
+    "threshold": 54000,
+    "rendered_ssim": 0.9323435330406981,
+    "plot_area_foreground_iou": 0.23438429506246283,
+    "plot_area_foreground_f1": 0.37975903614457834,
+    "slice_foreground_voxels": 7847
+  },
+  {
+    "threshold": 56000,
+    "rendered_ssim": 0.9264435265467886,
+    "plot_area_foreground_iou": 0.08064927339168862,
+    "plot_area_foreground_f1": 0.14926077382824787,
+    "slice_foreground_voxels": 2688
+  }
+]

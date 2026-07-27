@@ -24,13 +24,4 @@ When this skill is active, inspect one or more `.npy` files and report basic Num
    - nonzero fraction
 4. If the array has 10 or fewer unique values, report the unique values too.
 
-## Preferred Python Pattern
-
-```python
-import numpy as np
-
-
-Important: make sure this is saved at:
-
-```text
-.agents/skills/npy_metadata_extractor/SKILL.md
+Use Python with NumPy to load the file and compute the metadata. Keep the final response concise and include the numerical results.
