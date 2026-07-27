@@ -14,6 +14,7 @@ function asFiniteNumber(value, fallback) {
 export const useDefectStore = create((set) => ({
   ...DEFAULT_CLASSIFICATION_THRESHOLDS,
   activeFilter: 'ALL',
+  activeSourceFilter: 'ALL',
 
   setMissingOccupancyThreshold: (value) =>
     set({
@@ -56,4 +57,5 @@ export const useDefectStore = create((set) => ({
     })),
 
   setActiveFilter: (activeFilter) => set({ activeFilter }),
+  setActiveSourceFilter: (activeSourceFilter) => set({ activeSourceFilter }),
 }));

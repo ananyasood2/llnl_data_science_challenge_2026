@@ -1,4 +1,32 @@
-const EMPTY_MESSAGE = 'Select a provisional candidate to view its CT-mask evidence.';
+const EMPTY_MESSAGE = 'Select a classified defect to view its CT-mask evidence.';
+
+const DEFECT_TYPE_COLORS = {
+  MISSING: '#ff4d4f',
+  BROKEN: '#ff9f43',
+  THIN: '#f9e547',
+  INTACT: '#62d5c5',
+  UNCLASSIFIED: '#ffbd59',
+};
+
+const DEFECT_SOURCE_COLORS = {
+  INTENTIONAL_CAD_OMISSION: '#c084fc',
+  LIKELY_PRINT_DEFECT: '#ff9f43',
+  NOT_A_DYNAMIC_DEFECT: '#62d5c5',
+  UNAVAILABLE: '#ffbd59',
+};
+
+const DEFECT_SOURCE_LABELS = {
+  INTENTIONAL_CAD_OMISSION: 'Intentional CAD omission',
+  LIKELY_PRINT_DEFECT: 'Likely print defect',
+  NOT_A_DYNAMIC_DEFECT: 'Not a dynamic defect',
+  UNAVAILABLE: 'Unavailable',
+};
+
+const DESIGN_INTENT_LABELS = {
+  INTENTIONAL_CAD_OMISSION: 'Intentional CAD omission',
+  CAD_PRESENT: 'CAD-present strut',
+  UNAVAILABLE: 'Design map unavailable',
+};
 
 function formatScore(value) {
   return typeof value === 'number' ? value.toFixed(3) : 'Unavailable';
@@ -38,7 +66,9 @@ export default function EvidenceCard({ defectsData, selectedStrutId }) {
   }
 
   const flags = selectedScore.flags ?? {};
-  const isCandidate = selectedScore.classification === 'candidate_missing_or_broken';
+  const defectType = selectedScore.defect_type ?? 'UNCLASSIFIED';
+  const defectSource = selectedScore.defect_source ?? 'UNAVAILABLE';
+  const designIntent = selectedScore.design_intent ?? 'UNAVAILABLE';
 
   return (
     <section style={cardStyle}>
@@ -49,10 +79,22 @@ export default function EvidenceCard({ defectsData, selectedStrutId }) {
       <p
         style={{
           ...statusStyle,
-          color: isCandidate ? '#ff6b6b' : selectedScore.classification === 'healthy' ? '#62d5c5' : '#ffbd59',
+          color: DEFECT_TYPE_COLORS[defectType] ?? DEFECT_TYPE_COLORS.UNCLASSIFIED,
         }}
       >
-        {isCandidate ? 'Provisional candidate: missing or broken' : selectedScore.classification ?? 'Unknown'}
+        Defect Type: {defectType}
+      </p>
+      <p
+        style={{
+          ...statusStyle,
+          color: DEFECT_SOURCE_COLORS[defectSource] ?? DEFECT_SOURCE_COLORS.UNAVAILABLE,
+          marginTop: '-8px',
+        }}
+      >
+        Source: {DEFECT_SOURCE_LABELS[defectSource] ?? defectSource}
+      </p>
+      <p style={{ color: '#cbd5e1', marginTop: '-8px' }}>
+        <strong>As-designed status:</strong> {DESIGN_INTENT_LABELS[designIntent] ?? designIntent}
       </p>
 
       <div style={{ display: 'grid', gap: '8px' }}>

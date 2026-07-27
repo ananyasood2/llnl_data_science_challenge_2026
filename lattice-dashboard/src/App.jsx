@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import LatticeViewer from './components/LatticeViewer';
 import SidePanel from './components/SidePanel';
-import { fetchDefects, fetchLatticeGraph } from './api/dashboardApi.js';
+import { classifyDefects, fetchLatticeGraph } from './api/dashboardApi.js';
+import { DEFAULT_CLASSIFICATION_THRESHOLDS } from './store/useDefectStore.js';
 
 function App() {
   const [selectedStrutId, setSelectedStrutId] = useState(null);
@@ -18,7 +19,10 @@ function App() {
     error: defectsError,
   } = useQuery({
     queryKey: ['defects'],
-    queryFn: fetchDefects,
+    queryFn: () => classifyDefects(DEFAULT_CLASSIFICATION_THRESHOLDS),
+    staleTime: Infinity,
+    refetchOnReconnect: false,
+    refetchOnWindowFocus: false,
   });
 
   const dashboardError = latticeError || defectsError;
@@ -46,6 +50,7 @@ function App() {
           latticeData={latticeData} 
           defectsData={defectsData} 
           selectedStrutId={selectedStrutId}
+          setSelectedStrutId={setSelectedStrutId}
         />
       </div>
 

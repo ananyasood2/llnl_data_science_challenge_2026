@@ -5,3 +5,6 @@ scikit-image
 tifffile
 fastapi
 uvicorn
+trimesh
+rtree
+scipy

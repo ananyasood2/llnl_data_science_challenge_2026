@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from src.design_intent import ARTIFACT_VERSION, STATUS_VALIDATED
 from src.lattice_roi import analyze_strut_roi_service
 
 
@@ -14,6 +15,12 @@ app = FastAPI(title="Lattice Defect API")
 
 MISSING_MATERIAL_COVERAGE_MAX = 0.01
 DEFECT_TYPES = ("MISSING", "BROKEN", "THIN", "INTACT")
+DEFECT_SOURCES = (
+    "INTENTIONAL_CAD_OMISSION",
+    "LIKELY_PRINT_DEFECT",
+    "NOT_A_DYNAMIC_DEFECT",
+    "UNAVAILABLE",
+)
 
 
 class DefectClassificationRequest(BaseModel):
@@ -47,6 +54,14 @@ DEFECTS_PATH = (
     / "missing_struts"
     / "segmentation"
     / "defects.json"
+)
+
+DESIGN_INTENT_ARTIFACT_PATH = (
+    Path(__file__).resolve().parent
+    / "data"
+    / "missing_struts"
+    / "design_intent"
+    / "0point5dash1_design_intent.v1.json"
 )
 
 MASK_PATH = (
@@ -126,6 +141,103 @@ def _classify_strut(score: dict, thresholds: DefectClassificationRequest) -> str
     return "INTACT"
 
 
+def _load_design_intent_map() -> tuple[dict, frozenset[int]]:
+    """Load a prevalidated CAD-to-registered-graph mapping if one exists.
+
+    A bad, missing, stale, or ambiguous artifact is intentionally exposed as
+    unavailable.  The API must never guess which symmetric nominal strut ID
+    corresponds to a physical CAD omission.
+    """
+
+    unavailable = {
+        "status": "unavailable",
+        "mapping_status": "unavailable",
+        "artifact_version": ARTIFACT_VERSION,
+        "paired_design_stl": "0.5.stl",
+        "intentional_missing_strut_count": 0,
+        "intentional_missing_strut_ids": [],
+        "validation": {
+            "passed": False,
+            "reason": "design_intent_artifact_not_found",
+        },
+    }
+    if not DESIGN_INTENT_ARTIFACT_PATH.exists():
+        return unavailable, frozenset()
+
+    try:
+        with DESIGN_INTENT_ARTIFACT_PATH.open("r", encoding="utf-8") as file:
+            artifact = json.load(file)
+    except (OSError, json.JSONDecodeError) as error:
+        unavailable["validation"] = {
+            "passed": False,
+            "reason": "design_intent_artifact_unreadable",
+            "detail": str(error),
+        }
+        return unavailable, frozenset()
+
+    artifact_status = artifact.get("status")
+    raw_ids = artifact.get("intentional_missing_strut_ids", [])
+    if artifact_status != STATUS_VALIDATED or artifact.get("mapping_status") != STATUS_VALIDATED:
+        return {
+            "status": "unavailable",
+            "mapping_status": artifact.get("mapping_status", "unavailable"),
+            "artifact_version": artifact.get("artifact_version", ARTIFACT_VERSION),
+            "paired_design_stl": artifact.get("specimen", {}).get("paired_design_stl", "0.5.stl"),
+            "intentional_missing_strut_count": 0,
+            "intentional_missing_strut_ids": [],
+            "validation": artifact.get("validation", unavailable["validation"]),
+        }, frozenset()
+
+    if not isinstance(raw_ids, list):
+        unavailable["validation"] = {
+            "passed": False,
+            "reason": "design_intent_artifact_has_invalid_ids",
+        }
+        return unavailable, frozenset()
+
+    try:
+        intentional_ids = frozenset(int(strut_id) for strut_id in raw_ids)
+    except (TypeError, ValueError):
+        unavailable["validation"] = {
+            "passed": False,
+            "reason": "design_intent_artifact_has_invalid_ids",
+        }
+        return unavailable, frozenset()
+
+    return {
+        "status": "validated",
+        "mapping_status": artifact.get("mapping_status", "validated"),
+        "artifact_version": artifact.get("artifact_version", ARTIFACT_VERSION),
+        "paired_design_stl": artifact.get("specimen", {}).get("paired_design_stl", "0.5.stl"),
+        "intentional_missing_strut_count": len(intentional_ids),
+        "intentional_missing_strut_ids": sorted(intentional_ids),
+        "validation": artifact.get("validation", {}),
+    }, intentional_ids
+
+
+def _apply_design_intent(score: dict, design_map: dict, intentional_ids: frozenset[int]) -> str:
+    """Attach conservative design intent/source labels to one classification."""
+
+    if design_map["status"] != "validated":
+        score["design_intent"] = "UNAVAILABLE"
+        score["defect_source"] = "UNAVAILABLE"
+        return "UNAVAILABLE"
+
+    strut_id = int(score["strut_id"])
+    if strut_id in intentional_ids:
+        score["design_intent"] = "INTENTIONAL_CAD_OMISSION"
+        score["defect_source"] = "INTENTIONAL_CAD_OMISSION"
+        return "INTENTIONAL_CAD_OMISSION"
+
+    score["design_intent"] = "CAD_PRESENT"
+    if score["defect_type"] != "INTACT":
+        score["defect_source"] = "LIKELY_PRINT_DEFECT"
+        return "LIKELY_PRINT_DEFECT"
+
+    score["defect_source"] = "NOT_A_DYNAMIC_DEFECT"
+    return "NOT_A_DYNAMIC_DEFECT"
+
+
 @app.post("/api/classify_defects")
 def classify_defects(
     thresholds: DefectClassificationRequest | None = None,
@@ -155,13 +267,17 @@ def classify_defects(
         )
 
     defect_type_counts = {defect_type: 0 for defect_type in DEFECT_TYPES}
+    defect_source_counts = {defect_source: 0 for defect_source in DEFECT_SOURCES}
     defective_strut_ids = []
+    design_map, intentional_ids = _load_design_intent_map()
 
     try:
         for score in strut_scores:
             defect_type = _classify_strut(score, active_thresholds)
             score["defect_type"] = defect_type
             defect_type_counts[defect_type] += 1
+            defect_source = _apply_design_intent(score, design_map, intentional_ids)
+            defect_source_counts[defect_source] += 1
 
             if defect_type != "INTACT":
                 defective_strut_ids.append(score["strut_id"])
@@ -180,6 +296,11 @@ def classify_defects(
         "thin_occupancy_threshold": active_thresholds.thin_occupancy_threshold,
         "missing_material_coverage_max": MISSING_MATERIAL_COVERAGE_MAX,
     }
+    analysis_parameters["design_intent_mapping"] = {
+        "status": design_map["status"],
+        "artifact_version": design_map["artifact_version"],
+        "paired_design_stl": design_map["paired_design_stl"],
+    }
 
     summary = results.setdefault("summary", {})
     summary["total_expected_struts"] = total_expected
@@ -188,7 +309,12 @@ def classify_defects(
         f"{(defective_count / total_expected * 100):.2f}%" if total_expected else "0.00%"
     )
     summary["defect_type_counts"] = defect_type_counts
+    summary["defect_source_counts"] = defect_source_counts
+    summary["intentional_cad_omissions_count"] = design_map[
+        "intentional_missing_strut_count"
+    ]
     results["defective_strut_ids"] = defective_strut_ids
+    results["design_intent"] = design_map
 
     return results
 
