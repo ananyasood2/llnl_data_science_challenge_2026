@@ -1,28 +1,47 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import LatticeViewer from './components/LatticeViewer';
 import SidePanel from './components/SidePanel';
+import { fetchDefects, fetchLatticeGraph } from './api/dashboardApi.js';
 
 function App() {
-  const [latticeData, setLatticeData] = useState(null);
-  const [defectsData, setDefectsData] = useState(null);
-  
   const [selectedStrutId, setSelectedStrutId] = useState(null);
+  const {
+    data: latticeData = null,
+    error: latticeError,
+  } = useQuery({
+    queryKey: ['lattice-graph'],
+    queryFn: fetchLatticeGraph,
+  });
+  const {
+    data: defectsData = null,
+    error: defectsError,
+  } = useQuery({
+    queryKey: ['defects'],
+    queryFn: fetchDefects,
+  });
 
-  useEffect(() => {
-    Promise.all([
-      fetch('http://localhost:8000/api/lattice-graph').then(res => res.json()),
-      fetch('http://localhost:8000/api/analyze-defects').then(res => res.json())
-    ])
-    .then(([lattice, defects]) => {
-      setLatticeData(lattice);
-      setDefectsData(defects);
-    })
-    .catch(err => console.error("Error fetching data:", err));
-  }, []);
+  const dashboardError = latticeError || defectsError;
 
   return (
     <div style={{ display: 'flex', width: '100vw', height: '100vh', backgroundColor: '#1a1a1a', color: 'white' }}>
       <div style={{ flex: 3, position: 'relative' }}>
+        {dashboardError && (
+          <div
+            role="alert"
+            style={{
+              background: '#5b2121',
+              color: '#ffd5d5',
+              left: '16px',
+              padding: '10px',
+              position: 'absolute',
+              top: '16px',
+              zIndex: 1,
+            }}
+          >
+            Unable to load dashboard data: {dashboardError.message}
+          </div>
+        )}
         <LatticeViewer 
           latticeData={latticeData} 
           defectsData={defectsData} 
