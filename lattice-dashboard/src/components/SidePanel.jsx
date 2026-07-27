@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import EvidenceCard from './EvidenceCard';
+import RoiEvidenceGallery from './RoiEvidenceGallery';
 
 const ROW_HEIGHT = 44;
 const LIST_HEIGHT = 352;
@@ -54,6 +55,8 @@ export default function SidePanel({ defectsData, selectedStrutId, setSelectedStr
       </div>
 
       <EvidenceCard defectsData={defectsData} selectedStrutId={selectedStrutId} />
+
+      <RoiEvidenceGallery selectedStrutId={selectedStrutId} />
 
       <div style={{ backgroundColor: '#2a2a2a', padding: '15px', borderRadius: '8px' }}>
         <h3>Provisional Candidate IDs</h3>
