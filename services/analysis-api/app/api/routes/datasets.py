@@ -22,6 +22,8 @@ from app.schemas.datasets import (
     DatasetDimensions,
     DatasetIntakeResponse,
     DatasetSlot,
+    GeometryBounds,
+    GeometryMetadata,
     IntensityRange,
 )
 
@@ -154,7 +156,7 @@ async def intake_dataset(
                     }
                 )
         else:
-            response = _intake_design_file(slot, file_names)
+            response = _intake_design_file(slot, uploaded_files[0], file_names)
 
         if not response.valid:
             return response
@@ -591,22 +593,215 @@ def _intake_tiff_stack(
 
 def _intake_design_file(
     slot: DatasetSlot,
+    upload: UploadedDatasetFile,
     file_names: list[str],
 ) -> DatasetIntakeResponse:
+    suffix = Path(file_names[0]).suffix.lower()
+    if suffix != ".stl":
+        return DatasetIntakeResponse(
+            valid=True,
+            slot=slot,
+            file_names=file_names,
+            file_type=suffix.lstrip("."),
+            dimensions=None,
+            intensity_range=None,
+            geometry_metadata=None,
+            embedded_metadata=None,
+            voxel_size_micron=None,
+            warnings=[
+                "STEP/STP geometry parsing is not implemented yet; file type was validated only."
+            ],
+            errors=[],
+            demo_mode=True,
+        )
+
+    try:
+        geometry_metadata = _parse_stl_metadata(upload.contents)
+    except ValueError as exc:
+        return DatasetIntakeResponse(
+            valid=False,
+            slot=slot,
+            file_names=file_names,
+            file_type="stl",
+            dimensions=None,
+            intensity_range=None,
+            geometry_metadata=None,
+            embedded_metadata=None,
+            voxel_size_micron=None,
+            warnings=[],
+            errors=[str(exc)],
+            demo_mode=get_settings().demo_mode,
+        )
+
     return DatasetIntakeResponse(
         valid=True,
         slot=slot,
         file_names=file_names,
-        file_type=Path(file_names[0]).suffix.lower().lstrip("."),
+        file_type="stl",
         dimensions=None,
         intensity_range=None,
+        geometry_metadata=geometry_metadata,
         embedded_metadata=None,
         voxel_size_micron=None,
         warnings=[
-            "CAD/STL geometry parsing is not implemented yet; file type was validated only."
+            "STL units are unspecified; use project voxel-size and design-context fields for physical scale."
         ],
         errors=[],
-        demo_mode=True,
+        demo_mode=get_settings().demo_mode,
+    )
+
+
+def _parse_stl_metadata(contents: bytes) -> GeometryMetadata:
+    if not contents:
+        raise ValueError("STL file is empty.")
+
+    if _looks_like_binary_stl(contents):
+        return _parse_binary_stl_metadata(contents)
+
+    try:
+        return _parse_ascii_stl_metadata(contents)
+    except UnicodeDecodeError as exc:
+        raise ValueError("Unable to decode ASCII STL; file is malformed.") from exc
+
+
+def _looks_like_binary_stl(contents: bytes) -> bool:
+    if len(contents) < 84:
+        return False
+
+    triangle_count = struct.unpack_from("<I", contents, 80)[0]
+    expected_size = 84 + triangle_count * 50
+    return expected_size == len(contents)
+
+
+def _parse_binary_stl_metadata(contents: bytes) -> GeometryMetadata:
+    if len(contents) < 84:
+        raise ValueError("Binary STL is malformed: missing header or triangle count.")
+
+    triangle_count = struct.unpack_from("<I", contents, 80)[0]
+    expected_size = 84 + triangle_count * 50
+    if expected_size != len(contents):
+        raise ValueError(
+            "Binary STL is malformed: triangle count does not match file size."
+        )
+    if triangle_count == 0:
+        raise ValueError("STL geometry contains no triangles.")
+
+    triangles: list[list[tuple[float, float, float]]] = []
+    offset = 84
+    for triangle_index in range(triangle_count):
+        values = struct.unpack_from("<12fH", contents, offset)
+        normal = values[0:3]
+        vertices = [
+            (values[3], values[4], values[5]),
+            (values[6], values[7], values[8]),
+            (values[9], values[10], values[11]),
+        ]
+        _validate_finite_values(normal, f"triangle {triangle_index + 1} normal")
+        for vertex_index, vertex in enumerate(vertices, start=1):
+            _validate_finite_values(
+                vertex, f"triangle {triangle_index + 1} vertex {vertex_index}"
+            )
+        triangles.append(vertices)
+        offset += 50
+
+    return _metadata_from_triangles("stl-binary", triangles)
+
+
+def _parse_ascii_stl_metadata(contents: bytes) -> GeometryMetadata:
+    if b"\x00" in contents:
+        raise ValueError("STL file is malformed; ASCII STL contains null bytes.")
+
+    text = contents.decode("utf-8-sig")
+    if not text.strip():
+        raise ValueError("STL file is empty.")
+    if not re.search(r"^\s*solid\b", text):
+        raise ValueError("ASCII STL is malformed: missing solid header.")
+
+    triangles: list[list[tuple[float, float, float]]] = []
+    current_vertices: list[tuple[float, float, float]] = []
+
+    for line_number, line in enumerate(text.splitlines(), start=1):
+        parts = line.strip().split()
+        if not parts:
+            continue
+        keyword = parts[0].lower()
+        if keyword == "vertex":
+            if len(parts) != 4:
+                raise ValueError(
+                    f"ASCII STL is malformed: vertex on line {line_number} must have 3 coordinates."
+                )
+            try:
+                vertex = tuple(float(value) for value in parts[1:4])
+            except ValueError as exc:
+                raise ValueError(
+                    f"ASCII STL is malformed: vertex on line {line_number} has invalid coordinates."
+                ) from exc
+            _validate_finite_values(vertex, f"line {line_number} vertex")
+            current_vertices.append(vertex)
+            continue
+        if keyword == "facet" and len(parts) >= 5 and parts[1].lower() == "normal":
+            try:
+                normal = tuple(float(value) for value in parts[2:5])
+            except ValueError as exc:
+                raise ValueError(
+                    f"ASCII STL is malformed: facet normal on line {line_number} has invalid coordinates."
+                ) from exc
+            _validate_finite_values(normal, f"line {line_number} facet normal")
+            continue
+        if keyword == "endfacet":
+            if len(current_vertices) != 3:
+                raise ValueError(
+                    f"ASCII STL is malformed: facet ending on line {line_number} has {len(current_vertices)} vertices; expected 3."
+                )
+            triangles.append(current_vertices)
+            current_vertices = []
+
+    if current_vertices:
+        raise ValueError("ASCII STL is malformed: final facet was not closed.")
+    if not triangles:
+        raise ValueError("STL geometry contains no triangles.")
+
+    return _metadata_from_triangles("stl-ascii", triangles)
+
+
+def _validate_finite_values(values: tuple[float, ...], label: str) -> None:
+    if not all(np.isfinite(value) for value in values):
+        raise ValueError(f"STL geometry contains non-finite coordinates in {label}.")
+
+
+def _metadata_from_triangles(
+    stl_format: Literal["stl-ascii", "stl-binary"],
+    triangles: list[list[tuple[float, float, float]]],
+) -> GeometryMetadata:
+    vertices = np.asarray(triangles, dtype=np.float64)
+    edge_a = vertices[:, 1, :] - vertices[:, 0, :]
+    edge_b = vertices[:, 2, :] - vertices[:, 0, :]
+    double_areas = np.linalg.norm(np.cross(edge_a, edge_b), axis=1)
+    degenerate_indexes = np.where(double_areas <= 0.0)[0]
+    if degenerate_indexes.size:
+        triangle_number = int(degenerate_indexes[0]) + 1
+        raise ValueError(f"STL geometry contains a degenerate triangle at index {triangle_number}.")
+
+    flat_vertices = vertices.reshape((-1, 3))
+    min_bounds = flat_vertices.min(axis=0)
+    max_bounds = flat_vertices.max(axis=0)
+    extents = max_bounds - min_bounds
+    if np.any(extents <= 0.0):
+        raise ValueError(
+            "STL geometry is degenerate: bounding box must have positive x, y, and z extents."
+        )
+
+    unique_vertices = np.unique(flat_vertices, axis=0)
+    return GeometryMetadata(
+        format=stl_format,
+        triangle_count=len(triangles),
+        vertex_count=int(unique_vertices.shape[0]),
+        dimensions={"x": float(extents[0]), "y": float(extents[1]), "z": float(extents[2])},
+        bounds=GeometryBounds(
+            x=(float(min_bounds[0]), float(max_bounds[0])),
+            y=(float(min_bounds[1]), float(max_bounds[1])),
+            z=(float(min_bounds[2]), float(max_bounds[2])),
+        ),
     )
 
 
@@ -632,15 +827,20 @@ def _persist_intake_assets(
     *,
     existing_dataset_id: str | None,
 ) -> str:
-    if slot == "npyVolume" and existing_dataset_id:
+    if slot in {"npyVolume", "stlCad"} and existing_dataset_id:
         dataset_dir = get_settings().upload_storage_root / existing_dataset_id
         if not dataset_dir.is_dir():
             raise HTTPException(status_code=404, detail="Dataset not found.")
 
         upload = uploaded_files[0]
-        output_path = dataset_dir / "override_volume.npy"
+        output_path = (
+            dataset_dir / "override_volume.npy"
+            if slot == "npyVolume"
+            else dataset_dir / _safe_storage_file_name(upload.file_name)
+        )
         output_path.write_bytes(upload.contents)
-        _load_cached_original_volume.cache_clear()
+        if slot == "npyVolume":
+            _load_cached_original_volume.cache_clear()
         return existing_dataset_id
 
     return _persist_uploaded_dataset(uploaded_files + generated_files)

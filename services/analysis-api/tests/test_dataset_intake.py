@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import struct
 from io import BytesIO
 from pathlib import Path
 from uuid import UUID
@@ -77,6 +78,55 @@ def _tiff_bytes(array: np.ndarray, *, resolution: tuple[int, int] | None = None)
 
     tifffile.imwrite(buffer, array, **options)
     return buffer.getvalue()
+
+
+def _ascii_stl_bytes() -> bytes:
+    return b"""solid tetra
+facet normal 0 0 1
+  outer loop
+    vertex 0 0 0
+    vertex 1 0 0
+    vertex 0 1 0
+  endloop
+endfacet
+facet normal 0 -1 0
+  outer loop
+    vertex 0 0 0
+    vertex 0 0 1
+    vertex 1 0 0
+  endloop
+endfacet
+facet normal 1 1 1
+  outer loop
+    vertex 1 0 0
+    vertex 0 0 1
+    vertex 0 1 0
+  endloop
+endfacet
+facet normal -1 0 0
+  outer loop
+    vertex 0 0 0
+    vertex 0 1 0
+    vertex 0 0 1
+  endloop
+endfacet
+endsolid tetra
+"""
+
+
+def _binary_stl_bytes() -> bytes:
+    triangles = [
+        ((0.0, 0.0, 1.0), ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0))),
+        ((0.0, -1.0, 0.0), ((0.0, 0.0, 0.0), (0.0, 0.0, 1.0), (1.0, 0.0, 0.0))),
+        ((1.0, 1.0, 1.0), ((1.0, 0.0, 0.0), (0.0, 0.0, 1.0), (0.0, 1.0, 0.0))),
+        ((-1.0, 0.0, 0.0), ((0.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))),
+    ]
+    payload = bytearray(b"binary tetra".ljust(80, b"\x00"))
+    payload.extend(struct.pack("<I", len(triangles)))
+    for normal, vertices in triangles:
+        values = [*normal, *vertices[0], *vertices[1], *vertices[2]]
+        payload.extend(struct.pack("<12fH", *values, 0))
+    return bytes(payload)
 
 
 def _assert_saved_dataset(payload: dict, upload_storage_root, file_names: list[str]) -> None:
@@ -321,6 +371,105 @@ def test_dataset_intake_stores_npy_override_with_existing_tiff_dataset(
         np.load(dataset_dir / "override_volume.npy", allow_pickle=False),
         override,
     )
+
+
+def test_dataset_intake_extracts_ascii_stl_metadata(_upload_storage_root) -> None:
+    response = asyncio.run(
+        _post_intake(
+            "stlCad",
+            [("reference.stl", _ascii_stl_bytes(), "model/stl")],
+        )
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["valid"] is True
+    _assert_saved_dataset(payload, _upload_storage_root, ["reference.stl"])
+    assert payload["file_type"] == "stl"
+    assert payload["geometry_metadata"] == {
+        "format": "stl-ascii",
+        "triangle_count": 4,
+        "vertex_count": 4,
+        "dimensions": {"x": 1.0, "y": 1.0, "z": 1.0},
+        "bounds": {"x": [0.0, 1.0], "y": [0.0, 1.0], "z": [0.0, 1.0]},
+    }
+    assert payload["warnings"] == [
+        "STL units are unspecified; use project voxel-size and design-context fields for physical scale."
+    ]
+    assert payload["errors"] == []
+
+
+def test_dataset_intake_extracts_binary_stl_metadata(_upload_storage_root) -> None:
+    response = asyncio.run(
+        _post_intake(
+            "stlCad",
+            [("reference.stl", _binary_stl_bytes(), "application/octet-stream")],
+        )
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["valid"] is True
+    assert payload["geometry_metadata"]["format"] == "stl-binary"
+    assert payload["geometry_metadata"]["triangle_count"] == 4
+    assert payload["geometry_metadata"]["vertex_count"] == 4
+    assert payload["geometry_metadata"]["dimensions"] == {"x": 1.0, "y": 1.0, "z": 1.0}
+
+
+def test_dataset_intake_stores_stl_with_existing_tiff_dataset(_upload_storage_root) -> None:
+    tiff_response = asyncio.run(
+        _post_intake(
+            "ctTiffStack",
+            [("stack.tif", _tiff_bytes(np.zeros((2, 3, 4), dtype=np.uint16)), "image/tiff")],
+        )
+    )
+    dataset_id = tiff_response.json()["dataset_id"]
+
+    response = asyncio.run(
+        _post_intake(
+            "stlCad",
+            [("design-reference.stl", _ascii_stl_bytes(), "model/stl")],
+            dataset_id=dataset_id,
+        )
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["valid"] is True
+    assert payload["dataset_id"] == dataset_id
+    assert (_upload_storage_root / dataset_id / "design-reference.stl").is_file()
+
+
+@pytest.mark.parametrize(
+    ("contents", "expected_error"),
+    [
+        (b"", "STL file is empty."),
+        (
+            b"solid broken\nfacet normal 0 0 1\nouter loop\nvertex nan 0 0\nvertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid\n",
+            "STL geometry contains non-finite coordinates",
+        ),
+        (
+            b"solid flat\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nvertex 2 0 0\nendloop\nendfacet\nendsolid\n",
+            "STL geometry contains a degenerate triangle",
+        ),
+        (b"not an stl", "ASCII STL is malformed: missing solid header."),
+    ],
+)
+def test_dataset_intake_rejects_invalid_stl(contents: bytes, expected_error: str) -> None:
+    response = asyncio.run(
+        _post_intake(
+            "stlCad",
+            [("bad.stl", contents, "model/stl")],
+        )
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["valid"] is False
+    assert payload["dataset_id"] is None
+    assert payload["geometry_metadata"] is None
+    assert payload["warnings"] == []
+    assert payload["errors"][0].startswith(expected_error)
 
 
 def test_dataset_intake_naturally_sorts_multi_file_tiff_stack(_upload_storage_root) -> None:

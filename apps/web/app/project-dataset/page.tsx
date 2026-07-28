@@ -2,6 +2,12 @@
 
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import {
+  GeometryMetadata,
+  formatGeometryBounds,
+  formatGeometryDimensions,
+  formatStlFormat,
+} from "./geometryMetadata";
 
 type DatasetSlotId = "ctTiffStack" | "npyVolume" | "stlCad" | "graphJson";
 type IntakeStatus = "idle" | "loading" | "valid" | "invalid";
@@ -41,6 +47,7 @@ type IntakeResult = {
   fileType?: string;
   dimensions?: IntakeDimensions;
   intensity_range?: IntakeRange;
+  geometry_metadata?: GeometryMetadata | null;
   embedded_metadata?: Record<string, unknown> | null;
   voxel_size_micron?: number | null;
   warnings?: string[];
@@ -284,6 +291,21 @@ function DatasetUploadPanel({
                   Intensity: {state.result.intensity_range.min} to{" "}
                   {state.result.intensity_range.max}
                 </span>
+              ) : null}
+              {state.result?.geometry_metadata ? (
+                <>
+                  <span className="file-summary">
+                    Geometry: {formatStlFormat(state.result.geometry_metadata.format)},{" "}
+                    {state.result.geometry_metadata.triangle_count} triangles,{" "}
+                    {state.result.geometry_metadata.vertex_count} vertices
+                  </span>
+                  <span className="file-summary">
+                    Bounds: {formatGeometryBounds(state.result.geometry_metadata)}
+                  </span>
+                  <span className="file-summary">
+                    Bounding box: {formatGeometryDimensions(state.result.geometry_metadata)}
+                  </span>
+                </>
               ) : null}
               {state.result?.warnings?.map((warning) => (
                 <span className="inline-warning" key={warning}>
@@ -576,7 +598,7 @@ export default function ProjectDatasetPage() {
         slotId,
         selectedFiles,
         slotId === "npyVolume" ? expectedDimensions : undefined,
-        slotId === "npyVolume" ? tiffDatasetId : undefined,
+        slotId === "npyVolume" || slotId === "stlCad" ? tiffDatasetId : undefined,
       );
 
       setSlotStates((current) => ({
