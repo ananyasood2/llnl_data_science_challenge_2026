@@ -1,0 +1,201 @@
+{
+  "audit_version": 1,
+  "audit_phase": 1,
+  "audit_date": "2026-07-28",
+  "scientific_behavior_changed": false,
+  "repository_inventory": {
+    "three_d_viewer": "app/app.py",
+    "lattice_structure_page": null,
+    "defect_inspection_page": null,
+    "exploratory_notebook": null,
+    "ct_loading": "src/lattice_pipeline/io.py",
+    "segmentation": "src/lattice_pipeline/segment.py",
+    "skeletonization": "src/lattice_pipeline/skeleton.py",
+    "json_loading": "src/lattice_pipeline/io.py",
+    "alignment": "src/lattice_pipeline/align.py",
+    "defect_detection": "src/lattice_pipeline/defects.py",
+    "frontend_api_types": null,
+    "fastapi_analysis_endpoints": [],
+    "networkx_used_by_active_source": false
+  },
+  "canonical_state_observed": {
+    "raw_array_axis_order": "ZYX",
+    "public_voxel_coordinate_order": "XYZ",
+    "raw_volume_shape_zyx": [
+      761,
+      815,
+      837
+    ],
+    "raw_dtype": "uint16",
+    "analysis_stride_zyx": [
+      2,
+      2,
+      2
+    ],
+    "analysis_shape_zyx": [
+      381,
+      408,
+      419
+    ],
+    "scientific_crop": null,
+    "display_crop": "segmentation_foreground_bounding_box",
+    "display_surface_step": "dynamic_approximately_9_to_10",
+    "physical_spacing_um_xyz": null,
+    "configured_estimated_spacing_um_xyz": [
+      57.738,
+      57.738,
+      57.738
+    ],
+    "physical_spacing_status": "unverified_estimate"
+  },
+  "coordinate_formulas": {
+    "analysis_from_original": "analysis_zyx = original_zyx / 2 for sampled voxels",
+    "original_from_analysis": "original_xyz = analysis_xyz * 2",
+    "surface_to_original": "original_zyx = (surface_local_zyx * surface_step + bbox_min_zyx) * analysis_stride",
+    "xy_slice": "volume[z, :, :]",
+    "xz_slice": "volume[:, y, :]",
+    "yz_slice": "volume[:, :, x]"
+  },
+  "current_cache": {
+    "threshold": 0.005,
+    "sampled_otsu_threshold": 40127.0,
+    "foreground_fraction": 1.0,
+    "registration_refinement_applied": false,
+    "registration_refinement_reason": "too_few_skeleton_voxels",
+    "detected_struts_by_status": {
+      "healthy": 18468
+    },
+    "detected_nodes_by_status": {
+      "healthy": 10206
+    },
+    "detected_defect_count": 0,
+    "expected_intentional_missing_struts": 93,
+    "ground_truth_false_negatives": 93,
+    "status": "invalid_and_contradicted"
+  },
+  "registration": {
+    "ct_json_basename_match": true,
+    "json_declares_coordinate_system": false,
+    "json_declares_units": false,
+    "json_declares_registration_transform": false,
+    "graph_bounds_fit_volume": true,
+    "configuration_forces_registered_identity": true,
+    "segmentation_dependent_refinement_available": true,
+    "independently_verified": false,
+    "status": "supported_registration_not_independently_verified",
+    "warnings": [
+      "Registration is trusted from configuration and filename placement.",
+      "The JSON contains no registration or unit metadata.",
+      "Refinement depends on the selected segmentation threshold.",
+      "The configured CAD cube symmetry has no provenance metadata."
+    ]
+  },
+  "crop_and_exclusion": {
+    "configured_crop": null,
+    "configured_excluded_cut_region": null,
+    "observed_valid_threshold_foreground_bounds_xyz": {
+      "min": [
+        18,
+        24,
+        0
+      ],
+      "max": [
+        782,
+        766,
+        760
+      ]
+    },
+    "manual_axis_limits_affect_detection": false,
+    "boundary_distance_available": false,
+    "inside_analysis_region_available": false,
+    "warning": "The high-Y cut/absent region is not represented by explicit analysis metadata."
+  },
+  "candidates_checked": {
+    "selected_candidates_with_full_evidence": 0,
+    "ground_truth_expected_struts_compared_to_active_cache": 93,
+    "active_cache_supported_candidates": 0,
+    "active_cache_contradicted_ground_truth_locations": 93
+  },
+  "mappings_passed": [
+    "TIFF metadata confirms ZYX array order.",
+    "Classifier mask sampling explicitly converts XYZ points to ZYX array indices.",
+    "Skeleton argwhere coordinates are explicitly reversed from ZYX to XYZ.",
+    "Serialized graph and defect coordinates restore analysis stride.",
+    "Marching-cubes display coordinates restore foreground-bbox offset, surface step, and analysis stride."
+  ],
+  "mappings_failed": [
+    "No selected 3D element is mapped to raw XY, XZ, and YZ evidence views.",
+    "No canonical typed coordinate transform is serialized.",
+    "No scientific crop or excluded-cut transform exists.",
+    "No image-origin or synchronized-crosshair behavior is tested.",
+    "No selected candidate is traced through raw CT, mask, skeleton, graph, boundary, and threshold evidence.",
+    "Final defect classification uses downsampled rather than full-resolution data."
+  ],
+  "classifications_supported": [],
+  "classifications_contradicted": [
+    {
+      "class": "healthy_strut",
+      "count": 93,
+      "reason": "The active degenerate threshold classifies all 93 intentional CAD removals as healthy."
+    }
+  ],
+  "classifications_questionable": [
+    {
+      "class": "broken",
+      "reason": "No raw-CT consistency, threshold persistence, or explicit cut-boundary exclusion."
+    },
+    {
+      "class": "disconnected",
+      "reason": "Skeleton-component rule is evaluated at stride 2 without explicit crop metadata."
+    },
+    {
+      "class": "thin_or_thick",
+      "reason": "TIFF spacing and anisotropy are unavailable; configured physical spacing is estimated."
+    },
+    {
+      "class": "boundary_uncertain",
+      "reason": "Heuristic face interpretation exists, but no explicit excluded-region geometry or distance."
+    }
+  ],
+  "classifications_changed_in_phase": 0,
+  "excluded_boundary_candidates": 0,
+  "selected_defect_evidence_api_available": false,
+  "orthogonal_evidence_views_available": false,
+  "local_volume_evidence_available": false,
+  "threshold_sensitivity_available": false,
+  "validation_bundle_export_available": false,
+  "test_results": {
+    "scientific_dashboard_pytest": {
+      "passed": 23,
+      "failed": 0
+    },
+    "fastapi_pytest": {
+      "passed": 2,
+      "failed": 0
+    },
+    "frontend_lint": "passed",
+    "frontend_typecheck": "passed",
+    "frontend_tests": {
+      "passed": 0,
+      "failed": 0,
+      "warning": "The frontend test command discovered zero tests."
+    },
+    "frontend_production_build": {
+      "status": "passed",
+      "note": "Required execution outside the restricted sandbox because Turbopack binds a local helper port."
+    }
+  },
+  "phase_1_files_created": [
+    "docs/DEFECT_3D_TO_2D_VERIFICATION.md",
+    "outputs/verification/verification_summary.json"
+  ],
+  "remaining_uncertainties": [
+    "Physical voxel spacing and anisotropy.",
+    "Independent registration provenance and accuracy.",
+    "Configured CAD symmetry provenance.",
+    "Exact high-Y cut/exclusion bounds and safety buffer.",
+    "Candidate-level threshold persistence.",
+    "Full-resolution evidence for every displayed defect.",
+    "Ground-truth semantics for missing nodes."
+  ]
+}

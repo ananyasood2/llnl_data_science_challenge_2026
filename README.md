@@ -18,6 +18,43 @@ Browser ──> Next.js web service ──> FastAPI analysis service
                                deterministic scientific Python
 ```
 
+## Local registered defect viewer
+
+The focused Dash app compares the registered missing-strut TIFF/JSON pair by
+default. It renders the classified design as an interactive 3D model, shows
+missing struts as red dotted lines and missing nodes as red open diamonds, and
+filters healthy, missing, boundary-uncertain, thin, and thick elements
+independently.
+
+For the registered 0.5% specimen, the pipeline robustly refines the supplied
+graph registration against the CT skeleton while excluding likely defect
+outliers. Exterior faces with scan-wide absence are labeled
+`boundary / uncertain` instead of being counted as missing. The complete and
+0.5% CAD STLs provide an independent 93-strut ground-truth set; the viewer
+reports ID-level precision, recall, and F1 alongside the detected count.
+
+```bash
+python -m pip install -r requirements.txt
+python app/app.py
+```
+
+Open <http://127.0.0.1:8050>. Drag to orbit, scroll to zoom, and click a strut
+or node for its classification details. The first missing-strut run builds the processed
+mask, skeleton, distance map, and `analysis.json`; later runs load those files
+from `data/missing_struts/processed/`.
+
+Useful alternatives:
+
+```bash
+# Clean single-cell baseline
+python app/app.py --dataset unitcell
+
+# Build the cache without starting the server
+python app/app.py --dataset missing_struts --preprocess-only
+```
+
+If the registered scan is still a Git LFS pointer, run `git lfs pull` first.
+
 ### Current functionality
 
 - strict TypeScript Next.js App Router base application
@@ -27,8 +64,8 @@ Browser ──> Next.js web service ──> FastAPI analysis service
 - explicit boundary around existing `src/` scientific and MCP code
 - documentation and contribution conventions for a four-person team
 
-This phase contains no real CT analysis, agent orchestration, LLM connection, or
-cloud resource creation.
+The standalone Dash defect viewer now provides the real CT analysis path. The
+Next.js/FastAPI foundation remains separate and does not yet call that pipeline.
 
 ### Local frontend
 
