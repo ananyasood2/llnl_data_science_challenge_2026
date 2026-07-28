@@ -22,7 +22,12 @@ def _upload_storage_root(tmp_path, monkeypatch):
     get_settings.cache_clear()
 
 
-async def _post_intake(slot: str, files: list[tuple[str, bytes, str]]) -> httpx.Response:
+async def _post_intake(
+    slot: str,
+    files: list[tuple[str, bytes, str]],
+    *,
+    origin: str | None = None,
+) -> httpx.Response:
     transport = httpx.ASGITransport(app=app)
     multipart_files = [
         ("files", (file_name, contents, content_type))
@@ -34,6 +39,7 @@ async def _post_intake(slot: str, files: list[tuple[str, bytes, str]]) -> httpx.
             "/v1/datasets/intake",
             data={"slot": slot},
             files=multipart_files,
+            headers={"Origin": origin} if origin else None,
         )
 
 
@@ -133,6 +139,23 @@ def test_dataset_intake_extracts_single_multipage_tiff_metadata(_upload_storage_
     assert payload["warnings"] == []
     assert payload["errors"] == []
     assert payload["demo_mode"] is False
+
+
+def test_dataset_intake_allows_127_frontend_origin_for_tiff_upload(
+    _upload_storage_root,
+) -> None:
+    stack = np.arange(24, dtype=np.uint16).reshape((2, 3, 4))
+    response = asyncio.run(
+        _post_intake(
+            "ctTiffStack",
+            [("stack.tif", _tiff_bytes(stack), "image/tiff")],
+            origin="http://127.0.0.1:3000",
+        )
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://127.0.0.1:3000"
+    assert response.json()["valid"] is True
 
 
 def test_dataset_intake_extracts_multi_file_tiff_stack_metadata(_upload_storage_root) -> None:

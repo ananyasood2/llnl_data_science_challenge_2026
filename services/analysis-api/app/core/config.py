@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     """Validated runtime configuration for local and Cloud Run environments."""
 
     app_env: str = "development"
-    cors_allowed_origins: str = "http://localhost:3000"
+    cors_allowed_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
     gcp_project_id: str | None = None
     gcs_bucket_name: str | None = None
     demo_mode: bool = True
@@ -34,7 +34,7 @@ class Settings(BaseSettings):
             for origin in self.cors_allowed_origins.split(",")
             if origin.strip()
         )
-        return origins or ("http://localhost:3000",)
+        return origins or ("http://localhost:3000", "http://127.0.0.1:3000")
 
 
 @lru_cache
