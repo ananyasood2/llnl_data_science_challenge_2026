@@ -1,8 +1,11 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import numpy as np
 
 from src.mask_morphology import close_binary_mask
+from regenerate_registered_defects import _masks_are_equal
 
 
 class MaskMorphologyTests(unittest.TestCase):
@@ -43,6 +46,19 @@ class MaskMorphologyTests(unittest.TestCase):
         closed = close_binary_mask(mask)
 
         self.assertTrue(closed[0, 4, 4])
+
+    def test_identical_mask_detection_compares_content_not_paths(self) -> None:
+        mask = np.zeros((5, 5, 5), dtype=bool)
+        mask[2, 2, 2] = True
+        with TemporaryDirectory() as directory:
+            left = Path(directory) / "left.npy"
+            right = Path(directory) / "right.npy"
+            np.save(left, mask)
+            np.save(right, mask)
+            self.assertTrue(_masks_are_equal(left, right))
+            mask[0, 0, 0] = True
+            np.save(right, mask)
+            self.assertFalse(_masks_are_equal(left, right))
 
 
 if __name__ == "__main__":

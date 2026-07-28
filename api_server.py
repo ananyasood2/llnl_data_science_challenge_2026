@@ -47,7 +47,7 @@ REGISTERED_GRAPH_PATH = (
     / "data"
     / "missing_struts"
     / "registered_jsons"
-    / "210127_Brian_Tran_strut_lattices_0point5dash1 1 Slices.json"
+    / "0point5dash1_autonomous_registered.json"
 )
 
 DEFECTS_PATH = (
@@ -338,8 +338,8 @@ def classify_defects(
         "paired_design_stl": design_map["paired_design_stl"],
     }
     analysis_parameters["registered_graph_source"] = {
-        "path": "data/missing_struts/registered_jsons/210127_Brian_Tran_strut_lattices_0point5dash1 1 Slices.json",
-        "coordinate_source": "registered_json",
+        "path": "data/missing_struts/registered_jsons/0point5dash1_autonomous_registered.json",
+        "coordinate_source": "autonomous_cad_to_ct_registration",
     }
 
     summary = results.setdefault("summary", {})

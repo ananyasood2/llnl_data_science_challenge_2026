@@ -41,7 +41,7 @@ REGISTERED_GRAPH_PATH = (
     / "data"
     / "missing_struts"
     / "registered_jsons"
-    / "210127_Brian_Tran_strut_lattices_0point5dash1 1 Slices.json"
+    / "0point5dash1_autonomous_registered.json"
 )
 MASK_PATH = ROOT / "data" / "missing_struts" / "segmentation" / "0point5dash1_mask.npy"
 RAW_MASK_PATH = MASK_PATH.with_name("0point5dash1_mask.raw.npy")
@@ -125,6 +125,24 @@ def _mask_change_counts(source_mask: np.ndarray, closed_mask: np.ndarray) -> tup
     return added, removed
 
 
+def _masks_are_equal(left_path: Path, right_path: Path) -> bool:
+    """Compare two binary masks in slabs without materializing whole volumes."""
+
+    left = np.load(left_path, mmap_mode="r")
+    right = np.load(right_path, mmap_mode="r")
+    try:
+        if left.shape != right.shape or left.dtype != right.dtype:
+            return False
+        for start in range(0, left.shape[0], 32):
+            stop = min(start + 32, left.shape[0])
+            if not np.array_equal(left[start:stop], right[start:stop]):
+                return False
+        return True
+    finally:
+        del left
+        del right
+
+
 def _stage_closed_mask() -> tuple[Path, dict]:
     """Close the preserved raw mask and write a verified temporary mask artifact."""
 
@@ -183,6 +201,8 @@ def _provenance(alignment: dict, graph_ids: frozenset[int], mask_change_summary:
     closed_mask = file_fingerprint(MASK_PATH, ROOT, include_sha256=True)
     return {
         "schema_version": BASE_EVIDENCE_PROVENANCE_VERSION,
+        # Keep the stable provenance enum expected by the API validator. The
+        # fingerprint below identifies the specific autonomous graph artifact.
         "coordinate_source": "registered_json",
         "generated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "registered_graph": {
@@ -248,10 +268,16 @@ def regenerate_registered_defects() -> dict:
         if score_errors:
             raise RuntimeError("Generated evidence has invalid score IDs: " + "; ".join(score_errors))
 
-        # Retain a byte-for-byte rollback artifact until both live files publish.
-        shutil.copy2(MASK_PATH, rollback_mask)
-        os.replace(staged_mask, MASK_PATH)
-        mask_replaced = True
+        # The current live mask is normally the deterministic closing of the
+        # raw backup. Avoid replacing an identical memory-mapped file on
+        # Windows: an API ROI request can keep that file open even though no
+        # material data would change.
+        if not _masks_are_equal(MASK_PATH, staged_mask):
+            # Retain a byte-for-byte rollback artifact until both live files
+            # publish when a genuinely different mask must be promoted.
+            shutil.copy2(MASK_PATH, rollback_mask)
+            os.replace(staged_mask, MASK_PATH)
+            mask_replaced = True
 
         analysis_parameters = results.setdefault("analysis_parameters", {})
         analysis_parameters[BASE_EVIDENCE_PROVENANCE_KEY] = _provenance(
@@ -291,6 +317,7 @@ def regenerate_registered_defects() -> dict:
             "legacy_candidate_count": results["summary"]["missing_defects_count"],
             "raw_mask_backup_path": str(RAW_MASK_PATH),
             "raw_mask_backup_created": raw_mask_backup_created,
+            "mask_replaced": mask_replaced,
             "mask_preprocessing": mask_change_summary,
         }
     except Exception:
