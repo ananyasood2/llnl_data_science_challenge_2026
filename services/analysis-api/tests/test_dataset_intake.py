@@ -267,7 +267,7 @@ def test_dataset_intake_extracts_multi_file_tiff_stack_metadata(_upload_storage_
     assert payload["intensity_range"] == {"min": 1.0, "max": 8.0}
     assert payload["voxel_size_micron"] is None
     assert payload["warnings"] == [
-        "Voxel size could not be read from TIFF metadata; enter voxel_size_micron manually."
+        "Voxel size could not be read from TIFF metadata; measurements remain in pixels/voxels until a verified voxel_size_micron is provided."
     ]
     assert payload["errors"] == []
     assert payload["demo_mode"] is False
@@ -534,6 +534,10 @@ def test_missing_struts_tiff_reaches_ready_state_without_npy_upload(
     assert payload["dimensions"]["y"] is not None
     assert payload["dimensions"]["z"] is not None
     assert payload["generated_file_names"] == ["normalized_volume.npy"]
+    assert payload["voxel_size_micron"] is None
+    assert payload["warnings"] == [
+        "Voxel size could not be read from TIFF metadata; measurements remain in pixels/voxels until a verified voxel_size_micron is provided."
+    ]
     assert (_upload_storage_root / payload["dataset_id"] / "normalized_volume.npy").is_file()
 
 

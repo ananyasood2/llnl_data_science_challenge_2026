@@ -384,6 +384,8 @@ Tran, B. et al., [“Resonant ultrasound spectroscopy measurement and modeling o
 *   **3D Graph Description:** Structural information describing the lattice geometry (e.g. node and edge lists).
 
 > **Note:** The STL file is not aligned/registered with the TIF or JSON file. Registration is a problem by itself. If you do not want to work on registration, `210127_Brian_Tran_strut_lattices_0point5dash1 1 Slices.json` is already aligned with the respective TIF file of the same name.
+>
+> **Scale note:** The missing-struts TIFF stack, aligned JSON, and repository documentation do not provide an authoritative CT voxel size. Do not infer one from nominal unit-cell or strut dimensions. Until a verified `voxel_size_micron` value is supplied, downstream distances and measurements should be reported in pixels or voxels.
 
 ### Project Goals
 

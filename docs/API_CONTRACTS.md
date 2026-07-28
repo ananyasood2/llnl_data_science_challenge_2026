@@ -7,6 +7,8 @@ contract source of truth in Phase 2.
 
 - Scientific units are explicit in field names.
 - Unavailable values are nullable; missing data is not converted to zero.
+- Unknown voxel scale must remain unknown. Distances and measurements are
+  reported in pixels or voxels until a verified `voxel_size_micron` is supplied.
 - Large arrays never appear in normal JSON responses.
 - Every mock response identifies demo mode.
 - Contract changes require team discussion and regenerated TypeScript types.
@@ -64,6 +66,7 @@ Alternative URI response, useful when slices are pre-rendered to object storage:
   "width_px": 470,
   "height_px": 470,
   "voxel_size_micron": null,
+  "measurement_unit": "voxel",
   "expires_at": "2026-07-27T20:00:00Z",
   "demo_mode": false
 }
@@ -77,4 +80,5 @@ Unavailable generated views should not fall back to synthetic images:
   dataset, missing pipeline stage” from missing routes or missing datasets.
 
 Large arrays must not appear in JSON responses. Unknown units or dimensions stay
-nullable rather than being converted to zero.
+nullable rather than being converted to zero. When `voxel_size_micron` is null,
+distance-like values must be labeled as pixels or voxels, not microns.

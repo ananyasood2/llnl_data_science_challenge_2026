@@ -362,7 +362,10 @@ function VoxelSizeInput({
         </span>
       </label>
       {source === "missing" ? (
-        <p className="field-note">Required when voxel size is missing from metadata.</p>
+        <p className="field-note">
+          Optional. Leave blank to keep downstream distances and measurements in
+          pixels/voxels.
+        </p>
       ) : null}
       {isOverride ? (
         <p className="field-note">
@@ -518,7 +521,7 @@ export default function ProjectDatasetPage() {
       : undefined;
   const voxelSizeKnown =
     hasPositiveVoxelSize(voxelSizeMicron) || typeof detectedVoxelSize === "number";
-  const requiresManualVoxelSize = useMemo(
+  const voxelSizeUnavailable = useMemo(
     () =>
       [slotStates.ctTiffStack, slotStates.npyVolume].some((slotState) =>
         slotState.result?.warnings?.some((warning) =>
@@ -545,7 +548,13 @@ export default function ProjectDatasetPage() {
   const checklistItems = [
     { label: "CT loaded", passed: ctLoaded },
     { label: "Normalized NPY volume ready", passed: normalizedVolumeReady },
-    { label: "Voxel size known", passed: voxelSizeKnown },
+    {
+      label: voxelSizeKnown
+        ? "Micron voxel size verified"
+        : "Scale unknown; measurements use pixels/voxels",
+      optional: !voxelSizeKnown,
+      passed: true,
+    },
     {
       label: "Dimensions detected",
       passed: dimensionsDetected,
@@ -652,11 +661,20 @@ export default function ProjectDatasetPage() {
     const params = new URLSearchParams({
       projectId: "Pending",
       dataset: datasetName,
-      voxelSizeMicron: voxelSizeMicron,
+      scaleUnit: voxelSizeKnown ? "micron" : "voxel",
     });
 
     if (datasetId) {
       params.set("datasetId", datasetId);
+    }
+
+    if (voxelSizeKnown) {
+      params.set(
+        "voxelSizeMicron",
+        hasPositiveVoxelSize(voxelSizeMicron)
+          ? voxelSizeMicron
+          : String(detectedVoxelSize),
+      );
     }
 
     if (dimensions?.x) {
@@ -702,10 +720,11 @@ export default function ProjectDatasetPage() {
           confirm sample metadata before starting downstream analysis.
         </p>
 
-        {requiresManualVoxelSize ? (
+        {voxelSizeUnavailable ? (
           <div className="warning-banner" role="alert">
-            Voxel size was not detected from the uploaded dataset. Enter the voxel
-            edge length manually before starting analysis.
+            Voxel size was not detected from the uploaded dataset. You can continue;
+            downstream distances and measurements will be labeled in pixels or voxels
+            until a verified micron value is entered.
           </div>
         ) : null}
 

@@ -573,7 +573,7 @@ def _intake_tiff_stack(
 
     if voxel_size_micron is None:
         warnings.append(
-            "Voxel size could not be read from TIFF metadata; enter voxel_size_micron manually."
+            "Voxel size could not be read from TIFF metadata; measurements remain in pixels/voxels until a verified voxel_size_micron is provided."
         )
 
     return DatasetIntakeResponse(

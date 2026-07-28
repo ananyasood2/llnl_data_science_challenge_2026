@@ -25,6 +25,7 @@ export default async function SegmentationPage({
   searchParams,
 }: SegmentationPageProps) {
   const params = searchParams ? await searchParams : {};
+  const scaleUnit = getParam(params, "scaleUnit", "voxel") === "micron" ? "micron" : "voxel";
   const datasetContext: DatasetContext = {
     datasetId: getParam(params, "datasetId", "") || null,
     dataset: getParam(params, "dataset", "No dataset selected"),
@@ -35,6 +36,7 @@ export default async function SegmentationPage({
       z: getParam(params, "z", "unknown"),
     },
     voxelSizeMicron: getParam(params, "voxelSizeMicron", "unknown"),
+    scaleUnit,
   };
 
   return <SegmentationClient datasetContext={datasetContext} />;

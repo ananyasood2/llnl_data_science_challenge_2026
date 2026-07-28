@@ -14,6 +14,7 @@ export type DatasetContext = {
     z: string;
   };
   voxelSizeMicron: string;
+  scaleUnit: "micron" | "voxel";
 };
 
 type Axis = "X" | "Y" | "Z";
@@ -324,6 +325,19 @@ async function saveSegmentation(datasetId: string, threshold: number) {
 
 function formatVoxelCount(value: number | null) {
   return typeof value === "number" ? value.toLocaleString() : "Pending";
+}
+
+function hasPositiveNumericValue(value: string) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0;
+}
+
+function formatVoxelSize(context: DatasetContext) {
+  if (context.scaleUnit === "micron" && hasPositiveNumericValue(context.voxelSizeMicron)) {
+    return `${context.voxelSizeMicron} micron`;
+  }
+
+  return "Unknown; distances remain in pixels/voxels";
 }
 
 function ViewModeTabs({ value, onChange }: ViewModeTabsProps) {
@@ -781,9 +795,14 @@ export function SegmentationClient({
     datasetContext.datasetId && segmentationSave.result
       ? `/skeletonization?${new URLSearchParams({
           datasetId: datasetContext.datasetId,
+          scaleUnit: datasetContext.scaleUnit,
           threshold: String(segmentationSave.result.threshold),
           foregroundVoxelCount: String(segmentationSave.result.foreground_voxel_count),
           backgroundVoxelCount: String(segmentationSave.result.background_voxel_count),
+          ...(datasetContext.scaleUnit === "micron" &&
+          hasPositiveNumericValue(datasetContext.voxelSizeMicron)
+            ? { voxelSizeMicron: datasetContext.voxelSizeMicron }
+            : {}),
         }).toString()}`
       : null;
 
@@ -1084,7 +1103,11 @@ export function SegmentationClient({
             </div>
             <div>
               <dt>Voxel size</dt>
-              <dd>{datasetContext.voxelSizeMicron} micron</dd>
+              <dd>{formatVoxelSize(datasetContext)}</dd>
+            </div>
+            <div>
+              <dt>Measurement unit</dt>
+              <dd>{datasetContext.scaleUnit === "micron" ? "Microns" : "Pixels / voxels"}</dd>
             </div>
             <div>
               <dt>Dataset ID</dt>
