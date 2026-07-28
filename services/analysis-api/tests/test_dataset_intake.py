@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from io import BytesIO
+from pathlib import Path
 from uuid import UUID
 
 import httpx
@@ -27,6 +29,8 @@ async def _post_intake(
     files: list[tuple[str, bytes, str]],
     *,
     origin: str | None = None,
+    expected_dimensions: dict[str, int] | None = None,
+    dataset_id: str | None = None,
 ) -> httpx.Response:
     transport = httpx.ASGITransport(app=app)
     multipart_files = [
@@ -35,17 +39,33 @@ async def _post_intake(
     ]
 
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        data = {"slot": slot}
+        if dataset_id:
+            data["dataset_id"] = dataset_id
+        if expected_dimensions:
+            data.update(
+                {
+                    f"expected_{axis}": str(value)
+                    for axis, value in expected_dimensions.items()
+                }
+            )
+
         return await client.post(
             "/v1/datasets/intake",
-            data={"slot": slot},
+            data=data,
             files=multipart_files,
             headers={"Origin": origin} if origin else None,
         )
 
 
-def _npy_bytes() -> bytes:
+def _npy_bytes(array: np.ndarray | None = None) -> bytes:
     buffer = BytesIO()
-    np.save(buffer, np.arange(24, dtype=np.float32).reshape((2, 3, 4)))
+    np.save(
+        buffer,
+        array
+        if array is not None
+        else np.arange(24, dtype=np.float32).reshape((2, 3, 4)),
+    )
     return buffer.getvalue()
 
 
@@ -127,9 +147,14 @@ def test_dataset_intake_extracts_single_multipage_tiff_metadata(_upload_storage_
     assert response.status_code == 200
     payload = response.json()
     assert payload["valid"] is True
-    _assert_saved_dataset(payload, _upload_storage_root, ["stack.tif"])
+    _assert_saved_dataset(
+        payload,
+        _upload_storage_root,
+        ["normalized_volume.npy", "stack.tif"],
+    )
     assert payload["slot"] == "ctTiffStack"
     assert payload["file_names"] == ["stack.tif"]
+    assert payload["generated_file_names"] == ["normalized_volume.npy"]
     assert payload["file_type"] == "tiff"
     assert payload["dimensions"] == {"x": 4, "y": 3, "z": 2}
     assert payload["intensity_range"] == {"min": 0.0, "max": 23.0}
@@ -139,6 +164,15 @@ def test_dataset_intake_extracts_single_multipage_tiff_metadata(_upload_storage_
     assert payload["warnings"] == []
     assert payload["errors"] == []
     assert payload["demo_mode"] is False
+
+    generated_volume = np.load(
+        _upload_storage_root / payload["dataset_id"] / "normalized_volume.npy",
+        allow_pickle=False,
+    )
+    assert generated_volume.dtype == np.float32
+    assert generated_volume.shape == stack.shape
+    assert float(generated_volume.min()) == 0.0
+    assert float(generated_volume.max()) == 1.0
 
 
 def test_dataset_intake_allows_127_frontend_origin_for_tiff_upload(
@@ -174,7 +208,11 @@ def test_dataset_intake_extracts_multi_file_tiff_stack_metadata(_upload_storage_
     assert response.status_code == 200
     payload = response.json()
     assert payload["valid"] is True
-    _assert_saved_dataset(payload, _upload_storage_root, ["slice-001.tif", "slice-002.tif"])
+    _assert_saved_dataset(
+        payload,
+        _upload_storage_root,
+        ["normalized_volume.npy", "slice-001.tif", "slice-002.tif"],
+    )
     assert payload["dimensions"] == {"x": 2, "y": 2, "z": 2}
     assert payload["intensity_range"] == {"min": 1.0, "max": 8.0}
     assert payload["voxel_size_micron"] is None
@@ -183,6 +221,106 @@ def test_dataset_intake_extracts_multi_file_tiff_stack_metadata(_upload_storage_
     ]
     assert payload["errors"] == []
     assert payload["demo_mode"] is False
+
+    generated_volume = np.load(
+        _upload_storage_root / payload["dataset_id"] / "normalized_volume.npy",
+        allow_pickle=False,
+    )
+    np.testing.assert_allclose(
+        generated_volume,
+        np.array([[[0.0, 1 / 7], [2 / 7, 3 / 7]], [[4 / 7, 5 / 7], [6 / 7, 1.0]]], dtype=np.float32),
+    )
+
+
+def test_dataset_intake_rejects_npy_override_with_mismatched_tiff_dimensions() -> None:
+    response = asyncio.run(
+        _post_intake(
+            "npyVolume",
+            [
+                (
+                    "other-dataset.npy",
+                    _npy_bytes(np.arange(60, dtype=np.float32).reshape((3, 4, 5))),
+                    "application/octet-stream",
+                )
+            ],
+            expected_dimensions={"x": 4, "y": 3, "z": 2},
+        )
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["valid"] is False
+    assert payload["dataset_id"] is None
+    assert payload["dimensions"] == {"x": 5, "y": 4, "z": 3}
+    assert payload["errors"] == [
+        (
+            "Uploaded .npy override dimensions must match the validated TIFF stack "
+            "dimensions; expected 4 x 3 x 2, got 5 x 4 x 3."
+        )
+    ]
+
+
+def test_dataset_intake_accepts_npy_override_with_matching_tiff_dimensions(
+    _upload_storage_root,
+) -> None:
+    response = asyncio.run(
+        _post_intake(
+            "npyVolume",
+            [
+                (
+                    "override.npy",
+                    _npy_bytes(np.arange(24, dtype=np.float32).reshape((2, 3, 4))),
+                    "application/octet-stream",
+                )
+            ],
+            expected_dimensions={"x": 4, "y": 3, "z": 2},
+        )
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["valid"] is True
+    _assert_saved_dataset(payload, _upload_storage_root, ["override.npy"])
+
+
+def test_dataset_intake_stores_npy_override_with_existing_tiff_dataset(
+    _upload_storage_root,
+) -> None:
+    tiff_response = asyncio.run(
+        _post_intake(
+            "ctTiffStack",
+            [
+                (
+                    "stack.tif",
+                    _tiff_bytes(np.arange(24, dtype=np.uint16).reshape((2, 3, 4))),
+                    "image/tiff",
+                )
+            ],
+        )
+    )
+    dataset_id = tiff_response.json()["dataset_id"]
+    override = (np.arange(24, dtype=np.float32).reshape((2, 3, 4)) + 100.0)
+
+    response = asyncio.run(
+        _post_intake(
+            "npyVolume",
+            [("from-same-stack.npy", _npy_bytes(override), "application/octet-stream")],
+            expected_dimensions={"x": 4, "y": 3, "z": 2},
+            dataset_id=dataset_id,
+        )
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["valid"] is True
+    assert payload["dataset_id"] == dataset_id
+    dataset_dir = _upload_storage_root / dataset_id
+    assert (dataset_dir / "normalized_volume.npy").is_file()
+    assert (dataset_dir / "override_volume.npy").is_file()
+    np.testing.assert_array_equal(
+        np.load(dataset_dir / "override_volume.npy", allow_pickle=False),
+        override,
+    )
 
 
 def test_dataset_intake_naturally_sorts_multi_file_tiff_stack(_upload_storage_root) -> None:
@@ -203,11 +341,51 @@ def test_dataset_intake_naturally_sorts_multi_file_tiff_stack(_upload_storage_ro
     _assert_saved_dataset(
         payload,
         _upload_storage_root,
-        ["slice_1.tif", "slice_2.tif", "slice_10.tif"],
+        ["normalized_volume.npy", "slice_1.tif", "slice_2.tif", "slice_10.tif"],
     )
     assert payload["file_names"] == ["slice_1.tif", "slice_2.tif", "slice_10.tif"]
     assert payload["dimensions"] == {"x": 2, "y": 2, "z": 3}
     assert payload["intensity_range"] == {"min": 1.0, "max": 10.0}
+
+    generated_volume = np.load(
+        _upload_storage_root / payload["dataset_id"] / "normalized_volume.npy",
+        allow_pickle=False,
+    )
+    np.testing.assert_allclose(generated_volume[:, 0, 0], [0.0, 1.0 / 9.0, 1.0])
+
+
+def test_missing_struts_tiff_reaches_ready_state_without_npy_upload(
+    _upload_storage_root,
+) -> None:
+    if os.environ.get("RUN_SLOW_INTAKE_TESTS") != "1":
+        pytest.skip("Set RUN_SLOW_INTAKE_TESTS=1 to run the 992 MB TIFF intake test.")
+
+    tiff_path = (
+        Path(__file__).resolve().parents[3]
+        / "data"
+        / "missing_struts"
+        / "tif_stacks"
+        / "210127_Brian_Tran_strut_lattices_0point5dash1 1 Slices.tif"
+    )
+    if not tiff_path.is_file():
+        pytest.skip("missing_struts TIFF is not present in this checkout.")
+
+    response = asyncio.run(
+        _post_intake(
+            "ctTiffStack",
+            [(tiff_path.name, tiff_path.read_bytes(), "image/tiff")],
+        )
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["valid"] is True
+    assert payload["slot"] == "ctTiffStack"
+    assert payload["dimensions"]["x"] is not None
+    assert payload["dimensions"]["y"] is not None
+    assert payload["dimensions"]["z"] is not None
+    assert payload["generated_file_names"] == ["normalized_volume.npy"]
+    assert (_upload_storage_root / payload["dataset_id"] / "normalized_volume.npy").is_file()
 
 
 def test_dataset_intake_returns_error_for_corrupt_tiff() -> None:

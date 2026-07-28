@@ -37,6 +37,7 @@ type IntakeResult = {
   dataset_id?: string | null;
   slot?: DatasetSlotId;
   file_names?: string[];
+  generated_file_names?: string[];
   fileType?: string;
   dimensions?: IntakeDimensions;
   intensity_range?: IntakeRange;
@@ -105,9 +106,9 @@ const datasetFiles: DatasetFileSlot[] = [
   },
   {
     id: "npyVolume",
-    label: ".npy volume",
-    description: "Required normalized volume for scientific agents.",
-    required: true,
+    label: ".npy override",
+    description: "Advanced optional override; must match CT stack dimensions.",
+    required: false,
     accept: ".npy",
   },
   {
@@ -152,11 +153,28 @@ function hasPositiveVoxelSize(value: string) {
   return Number.isFinite(parsed) && parsed > 0;
 }
 
-async function validateDatasetSlot(slotId: DatasetSlotId, files: File[]) {
+async function validateDatasetSlot(
+  slotId: DatasetSlotId,
+  files: File[],
+  expectedDimensions?: IntakeDimensions,
+  datasetId?: string | null,
+) {
   const formData = new FormData();
 
   formData.append("slot", slotId);
   files.forEach((file) => formData.append("files", file));
+  if (datasetId) {
+    formData.append("dataset_id", datasetId);
+  }
+  if (expectedDimensions?.x) {
+    formData.append("expected_x", String(expectedDimensions.x));
+  }
+  if (expectedDimensions?.y) {
+    formData.append("expected_y", String(expectedDimensions.y));
+  }
+  if (expectedDimensions?.z) {
+    formData.append("expected_z", String(expectedDimensions.z));
+  }
 
   const response = await fetch(`${getAnalysisApiUrl()}/v1/datasets/intake`, {
     method: "POST",
@@ -250,6 +268,11 @@ function DatasetUploadPanel({
               />
               {state.files.length > 0 ? (
                 <span className="file-summary">{state.files.join(", ")}</span>
+              ) : null}
+              {state.result?.generated_file_names?.length ? (
+                <span className="file-summary">
+                  Generated: {state.result.generated_file_names.join(", ")}
+                </span>
               ) : null}
               {state.result?.dimensions ? (
                 <span className="file-summary">
@@ -456,6 +479,9 @@ export default function ProjectDatasetPage() {
     (slotState) => slotState.status === "loading",
   );
   const ctLoaded = slotStates.ctTiffStack.status === "valid";
+  const normalizedVolumeReady =
+    ctLoaded ||
+    slotStates.npyVolume.status === "valid";
   const stlLoaded = slotStates.stlCad.status === "valid";
   const graphLoaded = slotStates.graphJson.status === "valid";
   const dimensionsDetected = [slotStates.ctTiffStack, slotStates.npyVolume].some(
@@ -496,6 +522,7 @@ export default function ProjectDatasetPage() {
 
   const checklistItems = [
     { label: "CT loaded", passed: ctLoaded },
+    { label: "Normalized NPY volume ready", passed: normalizedVolumeReady },
     { label: "Voxel size known", passed: voxelSizeKnown },
     {
       label: "Dimensions detected",
@@ -521,6 +548,21 @@ export default function ProjectDatasetPage() {
       return;
     }
 
+    const expectedDimensions = slotStates.ctTiffStack.result?.dimensions;
+    const tiffDatasetId = slotStates.ctTiffStack.result?.dataset_id;
+
+    if (slotId === "npyVolume" && !expectedDimensions) {
+      setSlotStates((current) => ({
+        ...current,
+        [slotId]: {
+          status: "invalid",
+          files: selectedFiles.map((file) => file.name),
+          error: "Upload and validate the CT TIFF stack before adding a .npy override.",
+        },
+      }));
+      return;
+    }
+
     setSlotStates((current) => ({
       ...current,
       [slotId]: {
@@ -530,7 +572,12 @@ export default function ProjectDatasetPage() {
     }));
 
     try {
-      const result = await validateDatasetSlot(slotId, selectedFiles);
+      const result = await validateDatasetSlot(
+        slotId,
+        selectedFiles,
+        slotId === "npyVolume" ? expectedDimensions : undefined,
+        slotId === "npyVolume" ? tiffDatasetId : undefined,
+      );
 
       setSlotStates((current) => ({
         ...current,

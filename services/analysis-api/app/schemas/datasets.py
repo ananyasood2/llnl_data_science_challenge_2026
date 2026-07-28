@@ -38,6 +38,7 @@ class DatasetIntakeResponse(BaseModel):
     dataset_id: str | None = None
     slot: DatasetSlot
     file_names: list[str]
+    generated_file_names: list[str] = Field(default_factory=list)
     file_type: str | None = None
     dimensions: DatasetDimensions | None = None
     intensity_range: IntensityRange | None = None

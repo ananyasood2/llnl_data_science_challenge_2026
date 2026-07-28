@@ -21,7 +21,13 @@ def _upload_storage_root(tmp_path, monkeypatch):
     get_settings.cache_clear()
 
 
-async def _post_intake(slot: str, files: list[tuple[str, bytes, str]]) -> httpx.Response:
+async def _post_intake(
+    slot: str,
+    files: list[tuple[str, bytes, str]],
+    *,
+    dataset_id: str | None = None,
+    expected_dimensions: dict[str, int] | None = None,
+) -> httpx.Response:
     transport = httpx.ASGITransport(app=app)
     multipart_files = [
         ("files", (file_name, contents, content_type))
@@ -29,9 +35,20 @@ async def _post_intake(slot: str, files: list[tuple[str, bytes, str]]) -> httpx.
     ]
 
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        data = {"slot": slot}
+        if dataset_id:
+            data["dataset_id"] = dataset_id
+        if expected_dimensions:
+            data.update(
+                {
+                    f"expected_{axis}": str(value)
+                    for axis, value in expected_dimensions.items()
+                }
+            )
+
         return await client.post(
             "/v1/datasets/intake",
-            data={"slot": slot},
+            data=data,
             files=multipart_files,
         )
 
@@ -113,6 +130,53 @@ def test_original_slice_returns_png_for_tiff_dataset() -> None:
     _assert_png_response(slice_response)
     assert slice_response.headers["x-slice-axis"] == "x"
     assert slice_response.headers["x-slice-index"] == "2"
+
+
+def test_segmentation_uses_matching_npy_override_for_tiff_dataset(
+    _upload_storage_root,
+) -> None:
+    tiff_response = asyncio.run(
+        _post_intake(
+            "ctTiffStack",
+            [
+                (
+                    "stack.tif",
+                    _tiff_bytes(np.zeros((2, 3, 4), dtype=np.uint16)),
+                    "image/tiff",
+                )
+            ],
+        )
+    )
+    dataset_id = tiff_response.json()["dataset_id"]
+    override = np.ones((2, 3, 4), dtype=np.float32)
+    override_response = asyncio.run(
+        _post_intake(
+            "npyVolume",
+            [("override.npy", _npy_bytes(override), "application/octet-stream")],
+            dataset_id=dataset_id,
+            expected_dimensions={"x": 4, "y": 3, "z": 2},
+        )
+    )
+    assert override_response.json()["dataset_id"] == dataset_id
+    transport = httpx.ASGITransport(app=app)
+
+    async def post_segmentation() -> httpx.Response:
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            return await client.post(
+                f"/v1/datasets/{dataset_id}/segmentation",
+                json={"threshold": 0.5},
+            )
+
+    response = asyncio.run(post_segmentation())
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["foreground_voxel_count"] == override.size
+    assert payload["background_voxel_count"] == 0
+    np.testing.assert_array_equal(
+        np.load(_upload_storage_root / dataset_id / "segmentation.npy"),
+        np.ones_like(override, dtype=bool),
+    )
 
 
 def test_slice_returns_404_for_missing_dataset() -> None:

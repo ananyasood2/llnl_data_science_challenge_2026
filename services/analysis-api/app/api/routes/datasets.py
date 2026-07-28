@@ -94,6 +94,10 @@ class VoxelProbeResponse(BaseModel):
 async def intake_dataset(
     slot: DatasetSlot = Form(...),
     files: list[UploadFile] = File(...),
+    dataset_id: str | None = Form(None),
+    expected_x: int | None = Form(None),
+    expected_y: int | None = Form(None),
+    expected_z: int | None = Form(None),
 ) -> DatasetIntakeResponse:
     """Validate uploaded dataset files and return compact intake metadata."""
     if not files:
@@ -118,20 +122,50 @@ async def intake_dataset(
                 demo_mode=get_settings().demo_mode,
             )
 
+        generated_files: list[UploadedDatasetFile] = []
+
         if slot == "npyVolume":
-            response = _intake_npy(slot, uploaded_files[0], file_names)
+            response = _intake_npy(
+                slot,
+                uploaded_files[0],
+                file_names,
+                expected_dimensions=_expected_dimensions(expected_x, expected_y, expected_z),
+            )
         elif slot == "graphJson":
             response = _intake_graph(slot, uploaded_files[0], file_names)
         elif slot == "ctTiffStack":
             response = _intake_tiff_stack(slot, uploaded_files)
+            if response.valid:
+                generated_files = [
+                    UploadedDatasetFile(
+                        "normalized_volume.npy",
+                        _npy_bytes_from_array(
+                            _normalize_volume_for_storage(
+                                _load_tiff_stack_from_uploads(uploaded_files)
+                            )
+                        ),
+                    )
+                ]
+                response = response.model_copy(
+                    update={
+                        "generated_file_names": [
+                            file.file_name for file in generated_files
+                        ]
+                    }
+                )
         else:
             response = _intake_design_file(slot, file_names)
 
         if not response.valid:
             return response
 
-        dataset_id = _persist_uploaded_dataset(uploaded_files)
-        return response.model_copy(update={"dataset_id": dataset_id})
+        persisted_dataset_id = _persist_intake_assets(
+            slot,
+            uploaded_files,
+            generated_files,
+            existing_dataset_id=dataset_id,
+        )
+        return response.model_copy(update={"dataset_id": persisted_dataset_id})
     finally:
         for upload in files:
             await upload.close()
@@ -312,6 +346,8 @@ def _intake_npy(
     slot: DatasetSlot,
     upload: UploadedDatasetFile,
     file_names: list[str],
+    *,
+    expected_dimensions: DatasetDimensions | None = None,
 ) -> DatasetIntakeResponse:
     try:
         array = _load_npy_volume_from_bytes(upload.contents)
@@ -342,6 +378,29 @@ def _intake_npy(
         )
 
     dimensions = _dimensions_from_shape(array.shape)
+
+    if expected_dimensions is not None and dimensions != expected_dimensions:
+        expected = format_dimensions(expected_dimensions)
+        actual = format_dimensions(dimensions)
+        return DatasetIntakeResponse(
+            valid=False,
+            slot=slot,
+            file_names=file_names,
+            file_type="npy",
+            dimensions=dimensions,
+            intensity_range=None,
+            embedded_metadata={"dtype": str(array.dtype), "shape": list(array.shape)},
+            voxel_size_micron=None,
+            warnings=[],
+            errors=[
+                (
+                    "Uploaded .npy override dimensions must match the validated "
+                    f"TIFF stack dimensions; expected {expected}, got {actual}."
+                )
+            ],
+            demo_mode=get_settings().demo_mode,
+        )
+
     intensity_range = IntensityRange(min=float(np.min(array)), max=float(np.max(array)))
 
     return DatasetIntakeResponse(
@@ -566,6 +625,52 @@ def _persist_uploaded_dataset(uploaded_files: list[UploadedDatasetFile]) -> str:
     return dataset_id
 
 
+def _persist_intake_assets(
+    slot: DatasetSlot,
+    uploaded_files: list[UploadedDatasetFile],
+    generated_files: list[UploadedDatasetFile],
+    *,
+    existing_dataset_id: str | None,
+) -> str:
+    if slot == "npyVolume" and existing_dataset_id:
+        dataset_dir = get_settings().upload_storage_root / existing_dataset_id
+        if not dataset_dir.is_dir():
+            raise HTTPException(status_code=404, detail="Dataset not found.")
+
+        upload = uploaded_files[0]
+        output_path = dataset_dir / "override_volume.npy"
+        output_path.write_bytes(upload.contents)
+        _load_cached_original_volume.cache_clear()
+        return existing_dataset_id
+
+    return _persist_uploaded_dataset(uploaded_files + generated_files)
+
+
+def _expected_dimensions(
+    expected_x: int | None,
+    expected_y: int | None,
+    expected_z: int | None,
+) -> DatasetDimensions | None:
+    if expected_x is None and expected_y is None and expected_z is None:
+        return None
+
+    if expected_x is None or expected_y is None:
+        raise HTTPException(
+            status_code=422,
+            detail="expected_x and expected_y are required when validating a .npy override.",
+        )
+
+    return DatasetDimensions(x=expected_x, y=expected_y, z=expected_z)
+
+
+def format_dimensions(dimensions: DatasetDimensions) -> str:
+    return " x ".join(
+        str(value)
+        for value in (dimensions.x, dimensions.y, dimensions.z)
+        if value is not None
+    )
+
+
 def _safe_storage_file_name(file_name: str) -> str:
     name = Path(file_name).name
     safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", name)
@@ -590,6 +695,14 @@ def _load_cached_original_volume(storage_root: str, dataset_id: str) -> np.ndarr
 
 
 def _load_persisted_original_volume(dataset_dir: Path) -> np.ndarray:
+    override_path = dataset_dir / "override_volume.npy"
+    if override_path.is_file():
+        return _as_zyx_volume(np.load(override_path, allow_pickle=False))
+
+    normalized_path = dataset_dir / "normalized_volume.npy"
+    if normalized_path.is_file():
+        return _as_zyx_volume(np.load(normalized_path, allow_pickle=False))
+
     npy_files = sorted(dataset_dir.glob("*.npy"), key=lambda path: _natural_sort_key(path.name))
 
     if npy_files:
@@ -617,6 +730,41 @@ def _load_npy_volume_from_bytes(contents: bytes) -> np.ndarray:
 def _load_tiff_volume_from_bytes(contents: bytes) -> np.ndarray:
     with tifffile.TiffFile(BytesIO(contents)) as tiff:
         return _as_zyx_volume(tiff.asarray())
+
+
+def _load_tiff_stack_from_uploads(uploads: list[UploadedDatasetFile]) -> np.ndarray:
+    sorted_uploads = sorted(uploads, key=lambda upload: _natural_sort_key(upload.file_name))
+    arrays = [
+        _load_tiff_volume_from_bytes(upload.contents)
+        for upload in sorted_uploads
+    ]
+    return np.concatenate(arrays, axis=0)
+
+
+def _npy_bytes_from_array(array: np.ndarray) -> bytes:
+    buffer = BytesIO()
+    np.save(buffer, array)
+    return buffer.getvalue()
+
+
+def _normalize_volume_for_storage(volume: np.ndarray) -> np.ndarray:
+    volume_float = np.asarray(volume, dtype=np.float32)
+    finite = volume_float[np.isfinite(volume_float)]
+
+    if finite.size == 0:
+        return np.zeros(volume_float.shape, dtype=np.float32)
+
+    min_value = float(np.min(finite))
+    max_value = float(np.max(finite))
+
+    if np.isclose(min_value, max_value):
+        return np.zeros(volume_float.shape, dtype=np.float32)
+
+    volume_float -= min_value
+    volume_float /= max_value - min_value
+    np.nan_to_num(volume_float, copy=False, nan=0.0, posinf=1.0, neginf=0.0)
+    np.clip(volume_float, 0.0, 1.0, out=volume_float)
+    return volume_float
 
 
 def _as_zyx_volume(array: np.ndarray) -> np.ndarray:
