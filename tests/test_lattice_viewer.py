@@ -5,6 +5,8 @@ from app.app import (
     _clicked_element,
     _inspection_figure,
     _record_intersects_axis_limits,
+    _selection_details,
+    _strut_geometry,
     _visible_summary,
 )
 
@@ -87,6 +89,54 @@ def test_click_data_resolves_the_selected_design_element():
     assert selected is not None
     assert selected[0] == "strut"
     assert selected[1]["status"] == "missing"
+
+
+def test_strut_geometry_reports_path_midpoint_endpoints_and_length():
+    geometry = _strut_geometry(
+        {
+            "id": 7,
+            "polyline": [[0, 0, 0], [2, 0, 0], [2, 2, 0]],
+        }
+    )
+
+    np.testing.assert_allclose(geometry["start"], [0, 0, 0])
+    np.testing.assert_allclose(geometry["end"], [2, 2, 0])
+    np.testing.assert_allclose(geometry["midpoint"], [2, 0, 0])
+    assert geometry["length"] == 4.0
+
+
+def test_hover_data_includes_node_and_strut_positions():
+    figure = _inspection_figure(
+        "missing_struts",
+        _analysis_fixture(),
+        ["healthy"],
+        ["struts", "nodes"],
+        False,
+        None,
+    )
+
+    strut_trace = next(trace for trace in figure.data if trace.name == "Healthy struts")
+    node_trace = next(trace for trace in figure.data if trace.name == "Healthy nodes")
+    assert "midpoint XYZ" in strut_trace.hovertemplate
+    assert "length" in strut_trace.hovertemplate
+    np.testing.assert_allclose(strut_trace.customdata[0][4:7], [0, 0.5, 0.5])
+    assert "XYZ" in node_trace.hovertemplate
+    np.testing.assert_allclose(node_trace.customdata[0][4:7], [0, 0, 0])
+
+
+def test_selection_details_include_node_and_strut_positions():
+    analysis = _analysis_fixture()
+
+    strut_details = _selection_details(("strut", analysis["struts"][0]))
+    strut_text = [component.children for component in strut_details]
+    assert "midpoint XYZ (0.00, 0.50, 0.50) voxels" in strut_text
+    assert "start XYZ (0.00, 0.00, 0.00)" in strut_text
+    assert "end XYZ (0.00, 1.00, 1.00)" in strut_text
+    assert "length 1.41 voxels" in strut_text
+
+    node_details = _selection_details(("node", analysis["nodes"][1]))
+    node_text = [component.children for component in node_details]
+    assert "XYZ (1.00, 1.00, 1.00) voxels" in node_text
 
 
 def test_manual_y_axis_maximum_is_applied_to_the_scene():

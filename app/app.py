@@ -105,6 +105,59 @@ def _reorder_xyz(points_xyz: Any, axis_order: str) -> np.ndarray:
     return points[..., list(_axis_indices(axis_order))]
 
 
+def _format_xyz(point_xyz: Any) -> str:
+    """Format one public XYZ voxel coordinate for the inspection UI."""
+
+    point = np.asarray(point_xyz, dtype=float)
+    if point.shape != (3,) or not np.all(np.isfinite(point)):
+        raise ValueError(f"Expected one finite xyz coordinate, got {point_xyz!r}")
+    return f"({point[0]:.2f}, {point[1]:.2f}, {point[2]:.2f})"
+
+
+def _strut_geometry(record: dict[str, Any]) -> dict[str, Any]:
+    """Derive inspectable geometry from a strut's XYZ polyline."""
+
+    points = np.asarray(record["polyline"], dtype=float)
+    if (
+        points.ndim != 2
+        or points.shape[1:] != (3,)
+        or len(points) < 2
+        or not np.all(np.isfinite(points))
+    ):
+        raise ValueError(
+            f"Strut {record.get('id', 'unknown')} has invalid polyline coordinates"
+        )
+
+    segment_lengths = np.linalg.norm(np.diff(points, axis=0), axis=1)
+    length = float(segment_lengths.sum())
+    if length <= 1e-12:
+        midpoint = points[0].copy()
+    else:
+        half_length = length / 2.0
+        cumulative = np.cumsum(segment_lengths)
+        segment_index = int(np.searchsorted(cumulative, half_length, side="left"))
+        distance_before = (
+            0.0 if segment_index == 0 else float(cumulative[segment_index - 1])
+        )
+        segment_length = float(segment_lengths[segment_index])
+        fraction = (
+            0.0
+            if segment_length <= 1e-12
+            else (half_length - distance_before) / segment_length
+        )
+        midpoint = (
+            points[segment_index]
+            + fraction * (points[segment_index + 1] - points[segment_index])
+        )
+
+    return {
+        "start": points[0],
+        "end": points[-1],
+        "midpoint": midpoint,
+        "length": length,
+    }
+
+
 def _display_axis_ranges(
     axis_order: str,
     axis_maxima: dict[str, float | None] | None,
@@ -267,11 +320,22 @@ def _strut_trace(
     z: list[float | None] = []
     customdata: list[list[Any]] = []
     for record in records:
+        geometry = _strut_geometry(record)
         element_data = [
             "strut",
             record["id"],
             status,
             record.get("confidence", 1.0),
+            geometry["midpoint"][0],
+            geometry["midpoint"][1],
+            geometry["midpoint"][2],
+            geometry["length"],
+            geometry["start"][0],
+            geometry["start"][1],
+            geometry["start"][2],
+            geometry["end"][0],
+            geometry["end"][1],
+            geometry["end"][2],
         ]
         for point in record["polyline"]:
             display_point = _reorder_xyz(point, axis_order)
@@ -311,6 +375,13 @@ def _strut_trace(
         hovertemplate=(
             f"<b>{STATUS_LABELS[status]} strut</b>"
             "<br>ID %{customdata[1]}"
+            "<br>midpoint XYZ (%{customdata[4]:.2f}, %{customdata[5]:.2f}, "
+            "%{customdata[6]:.2f}) voxels"
+            "<br>start XYZ (%{customdata[8]:.2f}, %{customdata[9]:.2f}, "
+            "%{customdata[10]:.2f})"
+            "<br>end XYZ (%{customdata[11]:.2f}, %{customdata[12]:.2f}, "
+            "%{customdata[13]:.2f})"
+            "<br>length %{customdata[7]:.2f} voxels"
             "<br>confidence %{customdata[3]:.2f}<extra></extra>"
         ),
         name=f"{STATUS_LABELS[status]} struts",
@@ -344,12 +415,22 @@ def _node_trace(
             },
         },
         customdata=[
-            ["node", record["id"], status, record.get("confidence", 1.0)]
+            [
+                "node",
+                record["id"],
+                status,
+                record.get("confidence", 1.0),
+                record["x"],
+                record["y"],
+                record["z"],
+            ]
             for record in records
         ],
         hovertemplate=(
             f"<b>{STATUS_LABELS[status]} node</b>"
             "<br>ID %{customdata[1]}"
+            "<br>XYZ (%{customdata[4]:.2f}, %{customdata[5]:.2f}, "
+            "%{customdata[6]:.2f}) voxels"
             "<br>confidence %{customdata[3]:.2f}<extra></extra>"
         ),
         name=f"{STATUS_LABELS[status]} nodes",
@@ -676,6 +757,15 @@ def _selection_details(
         html.Span(f"confidence {float(item.get('confidence', 1.0)):.2f}"),
     ]
     if kind == "strut":
+        geometry = _strut_geometry(item)
+        details.extend(
+            [
+                html.Span(f"midpoint XYZ {_format_xyz(geometry['midpoint'])} voxels"),
+                html.Span(f"start XYZ {_format_xyz(geometry['start'])}"),
+                html.Span(f"end XYZ {_format_xyz(geometry['end'])}"),
+                html.Span(f"length {geometry['length']:.2f} voxels"),
+            ]
+        )
         details.append(
             html.Span(f"present {100 * float(item.get('present_fraction', 0)):.1f}%")
         )
@@ -686,6 +776,11 @@ def _selection_details(
         if design is not None:
             details.append(html.Span(f"design {float(design):.0f} μm"))
     else:
+        details.append(
+            html.Span(
+                f"XYZ {_format_xyz([item['x'], item['y'], item['z']])} voxels"
+            )
+        )
         details.append(html.Span(f"design degree {item.get('degree', '—')}"))
     if item.get("boundary_reason"):
         details.append(
