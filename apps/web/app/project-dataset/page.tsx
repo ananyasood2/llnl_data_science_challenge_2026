@@ -34,6 +34,7 @@ type IntakeRange = {
 
 type IntakeResult = {
   valid: boolean;
+  dataset_id?: string | null;
   slot?: DatasetSlotId;
   file_names?: string[];
   fileType?: string;
@@ -576,11 +577,18 @@ export default function ProjectDatasetPage() {
     const dimensions = slotStates.ctTiffStack.result?.dimensions;
     const datasetName =
       slotStates.ctTiffStack.files[0] ?? slotStates.npyVolume.files[0] ?? "validated dataset";
+    const datasetId =
+      slotStates.ctTiffStack.result?.dataset_id ??
+      slotStates.npyVolume.result?.dataset_id;
     const params = new URLSearchParams({
       projectId: "Pending",
       dataset: datasetName,
       voxelSizeMicron: voxelSizeMicron,
     });
+
+    if (datasetId) {
+      params.set("datasetId", datasetId);
+    }
 
     if (dimensions?.x) {
       params.set("x", String(dimensions.x));

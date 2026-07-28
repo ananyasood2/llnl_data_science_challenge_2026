@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 const foundations = [
   { label: "Frontend", value: "Next.js · React · TypeScript", state: "Ready" },
   { label: "Analysis API", value: "FastAPI · Python", state: "Ready" },
@@ -33,6 +35,12 @@ export default function HomePage() {
           A modular research workspace for future CT inspection, defect analysis,
           measurement, grounded assistance, and NDE reporting.
         </p>
+
+        <div className="hero-actions">
+          <Link className="primary-link" href="/project-dataset">
+            Start dataset intake
+          </Link>
+        </div>
 
         <div className="notice" role="status">
           <strong>Phase 1 scaffold</strong>

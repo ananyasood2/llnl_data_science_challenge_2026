@@ -35,6 +35,7 @@ class DatasetIntakeResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     valid: bool
+    dataset_id: str | None = None
     slot: DatasetSlot
     file_names: list[str]
     file_type: str | None = None

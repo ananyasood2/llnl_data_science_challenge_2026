@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -16,6 +17,7 @@ class Settings(BaseSettings):
     gcs_bucket_name: str | None = None
     demo_mode: bool = True
     log_level: str = "INFO"
+    upload_storage_root: Path = Path("data/uploads")
 
     model_config = SettingsConfigDict(
         env_file=".env",
