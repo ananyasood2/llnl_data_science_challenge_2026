@@ -172,3 +172,5 @@ ehthumbs.db
 Thumbs.db
 
 result
+data/missing_struts/segmentation/defects.pre_registered_refresh.*.json
+data/missing_struts/segmentation/0point5dash1_mask.raw.npy

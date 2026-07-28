@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import EvidenceCard from './EvidenceCard';
 import RoiEvidenceGallery from './RoiEvidenceGallery';
 import { useClassifyDefects } from '../hooks/useClassifyDefects.js';
@@ -16,6 +16,15 @@ const LIST_HEIGHT = 352;
 const OVERSCAN_ROWS = 6;
 const FALLBACK_CALIBRATION_WARNING =
   'Note: Thresholds are currently uncalibrated. Defects shown are provisional candidates.';
+const CLASSIFICATION_DEBOUNCE_MS = 400;
+
+function thresholdKeyFor(thresholds) {
+  return [
+    thresholds?.missing_occupancy_threshold,
+    thresholds?.broken_gap_threshold,
+    thresholds?.thin_occupancy_threshold,
+  ].join(':');
+}
 
 function ThresholdControl({ id, label, value, onChange }) {
   return (
@@ -39,6 +48,12 @@ function ThresholdControl({ id, label, value, onChange }) {
 
 export default function SidePanel({ defectsData, selectedStrutId, setSelectedStrutId }) {
   const [listScroll, setListScroll] = useState({ filterKey: 'ALL:ALL', top: 0 });
+  const lastClassifiedThresholdKeyRef = useRef(null);
+  const selectionContextRef = useRef({
+    activeFilter: 'ALL',
+    activeSourceFilter: 'ALL',
+    selectedStrutId: null,
+  });
   const missingOccupancyThreshold = useDefectStore(
     (state) => state.missing_occupancy_threshold,
   );
@@ -57,14 +72,23 @@ export default function SidePanel({ defectsData, selectedStrutId, setSelectedStr
     (state) => state.setThinOccupancyThreshold,
   );
   const {
-    mutate: recalculateDefects,
+    classify,
     error: classificationError,
     isError: isClassificationError,
-    isPending: isRecalculating,
+    isPending: isClassifying,
   } = useClassifyDefects();
   const effectiveSourceFilter = getEffectiveSourceFilter(activeSourceFilter, defectsData);
   const designIntentAvailable = isDesignIntentAvailable(defectsData);
   const filterKey = `${activeFilter}:${effectiveSourceFilter}`;
+  const thresholdSnapshot = useMemo(() => ({
+    missing_occupancy_threshold: missingOccupancyThreshold,
+    broken_gap_threshold: brokenGapThreshold,
+    thin_occupancy_threshold: thinOccupancyThreshold,
+  }), [brokenGapThreshold, missingOccupancyThreshold, thinOccupancyThreshold]);
+  const thresholdKey = thresholdKeyFor(thresholdSnapshot);
+  const responseThresholdKey = thresholdKeyFor(
+    defectsData?.analysis_parameters?.classification_thresholds,
+  );
 
   const candidateIds = useMemo(
     () => {
@@ -92,30 +116,67 @@ export default function SidePanel({ defectsData, selectedStrutId, setSelectedStr
     [candidateIds, startIndex, endIndex],
   );
 
-  const handleRecalculate = () => {
-    recalculateDefects(undefined, {
-      onSuccess: (classificationResult) => {
-        const nextSourceFilter = isDesignIntentAvailable(classificationResult)
-          ? activeSourceFilter
-          : 'ALL';
-        if (nextSourceFilter !== activeSourceFilter) {
-          setActiveSourceFilter(nextSourceFilter);
-        }
-        if (selectedStrutId === null || selectedStrutId === undefined) return;
+  useEffect(() => {
+    selectionContextRef.current = {
+      activeFilter,
+      activeSourceFilter,
+      selectedStrutId,
+    };
+  }, [activeFilter, activeSourceFilter, selectedStrutId]);
 
-        const selectedScore = classificationResult.strut_scores?.find(
-          (score) => score?.strut_id === selectedStrutId,
-        );
-        if (!isVisibleDefectScore(selectedScore, {
-          activeFilter,
-          activeSourceFilter: nextSourceFilter,
-          defectsData: classificationResult,
-        })) {
-          setSelectedStrutId(null);
-        }
-      },
-    });
-  };
+  useEffect(() => {
+    if (!defectsData) return undefined;
+    if (
+      lastClassifiedThresholdKeyRef.current === null
+      && responseThresholdKey === thresholdKey
+    ) {
+      // App.jsx already requested the baseline classification with these
+      // defaults. Avoid immediately duplicating that initial POST.
+      lastClassifiedThresholdKeyRef.current = thresholdKey;
+      return undefined;
+    }
+    if (lastClassifiedThresholdKeyRef.current === thresholdKey) return undefined;
+
+    const timer = window.setTimeout(() => {
+      lastClassifiedThresholdKeyRef.current = thresholdKey;
+      classify(thresholdSnapshot, {
+        onSuccess: (classificationResult) => {
+          const currentSelection = selectionContextRef.current;
+          const nextSourceFilter = isDesignIntentAvailable(classificationResult)
+            ? currentSelection.activeSourceFilter
+            : 'ALL';
+          if (nextSourceFilter !== currentSelection.activeSourceFilter) {
+            setActiveSourceFilter(nextSourceFilter);
+          }
+          if (
+            currentSelection.selectedStrutId === null
+            || currentSelection.selectedStrutId === undefined
+          ) return;
+
+          const selectedScore = classificationResult.strut_scores?.find(
+            (score) => score?.strut_id === currentSelection.selectedStrutId,
+          );
+          if (!isVisibleDefectScore(selectedScore, {
+            activeFilter: currentSelection.activeFilter,
+            activeSourceFilter: nextSourceFilter,
+            defectsData: classificationResult,
+          })) {
+            setSelectedStrutId(null);
+          }
+        },
+      });
+    }, CLASSIFICATION_DEBOUNCE_MS);
+
+    return () => window.clearTimeout(timer);
+  }, [
+    classify,
+    defectsData,
+    responseThresholdKey,
+    setActiveSourceFilter,
+    setSelectedStrutId,
+    thresholdKey,
+    thresholdSnapshot,
+  ]);
 
   if (!defectsData) return <div style={{ padding: '20px' }}>Loading Diagnostics...</div>;
 
@@ -165,25 +226,17 @@ export default function SidePanel({ defectsData, selectedStrutId, setSelectedStr
             value={thinOccupancyThreshold}
             onChange={setThinOccupancyThreshold}
           />
-          <button
-            type="button"
-            onClick={handleRecalculate}
-            disabled={isRecalculating}
-            style={{
-              backgroundColor: isRecalculating ? '#38434f' : '#244c49',
-              border: '1px solid #62d5c5',
-              borderRadius: '4px',
-              color: '#d7fffb',
-              cursor: isRecalculating ? 'progress' : 'pointer',
-              fontWeight: 700,
-              padding: '10px',
-            }}
+          <p
+            role="status"
+            style={{ color: isClassifying ? '#a9eee6' : '#b8b8b8', margin: 0 }}
           >
-            {isRecalculating ? 'Recalculating…' : 'Recalculate Defects'}
-          </button>
+            {isClassifying
+              ? 'Updating classification…'
+              : `Threshold changes apply automatically ${CLASSIFICATION_DEBOUNCE_MS} ms after you stop dragging.`}
+          </p>
           {isClassificationError && (
             <p role="alert" style={{ color: '#ffb3b3', margin: 0 }}>
-              Unable to recalculate defects: {classificationError?.message ?? 'Unknown error'}
+              Unable to update classification: {classificationError?.message ?? 'Unknown error'}
             </p>
           )}
         </div>

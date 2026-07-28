@@ -7,6 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from src.design_intent import ARTIFACT_VERSION, STATUS_VALIDATED
+from src.evidence_provenance import base_evidence_errors
 from src.lattice_roi import analyze_strut_roi_service
 
 
@@ -40,8 +41,9 @@ app.add_middleware(
 )
 
 # Resolve from this file so the API works no matter which directory starts it.
-JSON_PATH = (
-    Path(__file__).resolve().parent
+PROJECT_ROOT = Path(__file__).resolve().parent
+REGISTERED_GRAPH_PATH = (
+    PROJECT_ROOT
     / "data"
     / "missing_struts"
     / "registered_jsons"
@@ -49,7 +51,7 @@ JSON_PATH = (
 )
 
 DEFECTS_PATH = (
-    Path(__file__).resolve().parent
+    PROJECT_ROOT
     / "data"
     / "missing_struts"
     / "segmentation"
@@ -57,7 +59,7 @@ DEFECTS_PATH = (
 )
 
 DESIGN_INTENT_ARTIFACT_PATH = (
-    Path(__file__).resolve().parent
+    PROJECT_ROOT
     / "data"
     / "missing_struts"
     / "design_intent"
@@ -65,15 +67,17 @@ DESIGN_INTENT_ARTIFACT_PATH = (
 )
 
 MASK_PATH = (
-    Path(__file__).resolve().parent
+    PROJECT_ROOT
     / "data"
     / "missing_struts"
     / "segmentation"
     / "0point5dash1_mask.npy"
 )
 
+RAW_SEGMENTATION_MASK_PATH = MASK_PATH.with_name("0point5dash1_mask.raw.npy")
+
 RAW_TIFF_PATH = (
-    Path(__file__).resolve().parent
+    PROJECT_ROOT
     / "data"
     / "missing_struts"
     / "tif_stacks"
@@ -81,7 +85,7 @@ RAW_TIFF_PATH = (
 )
 
 ROI_OUTPUT_DIR = (
-    Path(__file__).resolve().parent
+    PROJECT_ROOT
     / "data"
     / "missing_struts"
     / "segmentation"
@@ -97,10 +101,15 @@ app.mount("/roi-artifacts", StaticFiles(directory=ROI_OUTPUT_DIR), name="roi-art
 @app.get("/api/lattice-graph")
 def get_lattice_graph():
     """Read the pre-aligned lattice graph and serve it to the frontend."""
-    if not JSON_PATH.exists():
-        return {"error": f"File not found at {JSON_PATH}. Please check your data folder."}
+    if not REGISTERED_GRAPH_PATH.exists():
+        return {
+            "error": (
+                f"Registered graph not found at {REGISTERED_GRAPH_PATH}. "
+                "Please check your data folder."
+            )
+        }
 
-    with JSON_PATH.open("r", encoding="utf-8") as file:
+    with REGISTERED_GRAPH_PATH.open("r", encoding="utf-8") as file:
         return json.load(file)
 
 
@@ -139,6 +148,32 @@ def _classify_strut(score: dict, thresholds: DefectClassificationRequest) -> str
     if tube_occupancy < thresholds.thin_occupancy_threshold:
         return "THIN"
     return "INTACT"
+
+
+def _require_registered_base_evidence(results: dict) -> None:
+    """Reject scores that cannot be proven to use the registered CT graph."""
+
+    try:
+        errors = base_evidence_errors(
+            results,
+            root=PROJECT_ROOT,
+            registered_graph_path=REGISTERED_GRAPH_PATH,
+            mask_path=MASK_PATH,
+            raw_mask_path=RAW_SEGMENTATION_MASK_PATH,
+        )
+    except (OSError, ValueError, TypeError, json.JSONDecodeError) as error:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Unable to validate registered base evidence: {error}",
+        ) from error
+    if errors:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Base CT evidence is stale or was not generated from the registered graph: "
+                f"{' ; '.join(errors)}. Run `python regenerate_registered_defects.py`."
+            ),
+        )
 
 
 def _load_design_intent_map() -> tuple[dict, frozenset[int]]:
@@ -258,6 +293,7 @@ def classify_defects(
             detail=f"Invalid defects.json: {error}",
         ) from error
 
+    _require_registered_base_evidence(results)
     active_thresholds = thresholds or DefectClassificationRequest()
     strut_scores = results.get("strut_scores")
     if not isinstance(strut_scores, list):
@@ -301,6 +337,10 @@ def classify_defects(
         "artifact_version": design_map["artifact_version"],
         "paired_design_stl": design_map["paired_design_stl"],
     }
+    analysis_parameters["registered_graph_source"] = {
+        "path": "data/missing_struts/registered_jsons/210127_Brian_Tran_strut_lattices_0point5dash1 1 Slices.json",
+        "coordinate_source": "registered_json",
+    }
 
     summary = results.setdefault("summary", {})
     summary["total_expected_struts"] = total_expected
@@ -324,7 +364,7 @@ def get_strut_roi(strut_id: int):
     """Generate and return local CT/mask evidence for one registered strut."""
     result = analyze_strut_roi_service(
         strut_id=strut_id,
-        json_filepath=JSON_PATH,
+        json_filepath=REGISTERED_GRAPH_PATH,
         mask_filepath=MASK_PATH,
         raw_tiff_filepath=RAW_TIFF_PATH,
         defects_filepath=DEFECTS_PATH,
