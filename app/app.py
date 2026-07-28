@@ -602,6 +602,40 @@ def _visible_summary(
             className="missing-summary",
         ),
     ]
+    for status in FILTER_ORDER[1:]:
+        status_struts = sum(
+            record["status"] == status for record in visible_struts
+        )
+        status_nodes = sum(
+            record["status"] == status for record in visible_nodes
+        )
+        summary.extend(
+            [
+                html.Span("•", className="summary-dot"),
+                html.Span(
+                    f"{status_struts:,} {STATUS_LABELS[status].lower()} struts · "
+                    f"{status_nodes:,} {STATUS_LABELS[status].lower()} nodes",
+                    className=f"status-count status-count-{status}",
+                ),
+            ]
+        )
+    flagged_statuses = set(FILTER_ORDER[:-1])
+    total_flagged = sum(
+        record["status"] in flagged_statuses
+        for record in visible_struts
+    ) + sum(
+        record["status"] in flagged_statuses
+        for record in visible_nodes
+    )
+    summary.extend(
+        [
+            html.Span("•", className="summary-dot"),
+            html.Span(
+                f"{total_flagged:,} total flagged elements",
+                className="total-flagged-summary",
+            ),
+        ]
+    )
     validation = analysis.get("validation")
     if validation:
         strut_metrics = validation["struts"]

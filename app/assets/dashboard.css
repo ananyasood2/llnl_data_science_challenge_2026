@@ -308,6 +308,31 @@ h1 {
   color: #ff8ca0;
 }
 
+.status-count-uncertain {
+  color: #76baff;
+}
+
+.status-count-thin {
+  color: var(--thin);
+}
+
+.status-count-thick {
+  color: var(--thick);
+}
+
+.status-count-healthy {
+  color: var(--healthy);
+}
+
+.total-flagged-summary {
+  padding: 2px 7px;
+  color: #f5fbff;
+  background: #203743;
+  border: 1px solid #3d5968;
+  border-radius: 999px;
+  font-weight: 750;
+}
+
 .validation-summary {
   color: #55d6be;
 }

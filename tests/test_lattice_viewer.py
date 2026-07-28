@@ -129,6 +129,34 @@ def test_axis_maximum_filters_rendered_elements_and_missing_counts():
     assert "Missing struts" not in {trace.name for trace in figure.data}
     assert summary[0].children == "3 struts · 2 nodes visible"
     assert summary[2].children == "0 missing struts · 1 missing nodes detected"
+    assert summary[4].children == (
+        "0 boundary / uncertain struts · 0 boundary / uncertain nodes"
+    )
+    assert summary[6].children == "1 thin struts · 0 thin nodes"
+    assert summary[8].children == "1 thick struts · 0 thick nodes"
+    assert summary[10].children == "1 healthy struts · 1 healthy nodes"
+    assert summary[12].children == "3 total flagged elements"
+
+
+def test_summary_counts_all_statuses_even_when_a_status_is_filtered_out():
+    analysis = _analysis_fixture()
+    analysis["struts"][0]["status"] = "uncertain"
+
+    summary = _visible_summary(
+        analysis,
+        ["missing"],
+        ["struts"],
+    )
+
+    assert summary[0].children == "1 struts · 0 nodes visible"
+    assert summary[2].children == "1 missing struts · 1 missing nodes detected"
+    assert summary[4].children == (
+        "1 boundary / uncertain struts · 0 boundary / uncertain nodes"
+    )
+    assert summary[6].children == "1 thin struts · 0 thin nodes"
+    assert summary[8].children == "1 thick struts · 0 thick nodes"
+    assert summary[10].children == "0 healthy struts · 1 healthy nodes"
+    assert summary[12].children == "5 total flagged elements"
 
 
 def test_strut_crossing_axis_limit_is_still_in_the_displayed_region():
