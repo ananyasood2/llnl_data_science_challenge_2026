@@ -1172,7 +1172,7 @@ function SaveSegmentationButton({
         </button>
         {continueHref ? (
           <a className="primary-link" href={continueHref}>
-            Continue to skeletonization
+            Continue to 3D Model
           </a>
         ) : null}
       </div>
@@ -1752,7 +1752,7 @@ export function SegmentationClient({
         </span>
         <p className="rail-copy">
           Inspect slices, tune a lightweight threshold preview, and prepare the final
-          segmentation result for downstream skeletonization.
+          segmentation result for the 3D Structure Analysis page.
         </p>
       </aside>
 
@@ -1761,7 +1761,7 @@ export function SegmentationClient({
         <h1>CT preparation</h1>
         <p className="lede">
           Review the source volume, preview threshold masks, and save the selected
-          segmentation output before skeletonization.
+          segmentation output before opening 3D Structure Analysis.
         </p>
 
         <section className="dataset-panel segmentation-summary" aria-labelledby="segmentation-summary-heading">
