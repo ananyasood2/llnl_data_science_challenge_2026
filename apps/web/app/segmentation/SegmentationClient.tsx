@@ -29,8 +29,10 @@ import {
 import {
   formatPercent,
   formatVoxelCount,
-  getHistogramPath,
+  getScaledHistogramPath,
+  getSegmentationQualityWarnings,
   getThresholdPercent,
+  type HistogramScale,
   type HistogramPayload,
   type HistogramScope,
 } from "./histogramChart";
@@ -49,7 +51,7 @@ export type DatasetContext = {
   scaleUnit: "micron" | "voxel";
 };
 
-type ViewMode = "original" | "segmentation" | "defects";
+type ViewMode = "original" | "overlay" | "mask" | "defects";
 
 type SliceViewerProps = {
   axis: Axis;
@@ -122,15 +124,21 @@ type IntensityHistogramProps = {
   message: string | null;
   threshold: number;
   scope: HistogramScope;
+  scale: HistogramScale;
   onScopeChange: (scope: HistogramScope) => void;
+  onScaleChange: (scale: HistogramScale) => void;
 };
 
 type ThresholdSliderProps = {
   value: number;
+  savedThreshold: number;
+  recommendedThreshold: number;
   min: number;
   max: number;
   step: number;
   onChange: (value: number) => void;
+  onAutoRecommended: () => void;
+  onReset: () => void;
 };
 
 type VoxelCountsProps = {
@@ -141,6 +149,7 @@ type VoxelCountsProps = {
 type SaveSegmentationButtonProps = {
   disabled: boolean;
   threshold: number;
+  dirty: boolean;
   saving: boolean;
   result: SavedSegmentation | null;
   error: string | null;
@@ -223,8 +232,23 @@ const viewModes: {
   label: string;
 }[] = [
   { id: "original", label: "Original" },
-  { id: "segmentation", label: "Segmentation" },
+  { id: "overlay", label: "Overlay" },
+  { id: "mask", label: "Mask" },
 ];
+
+const defaultThreshold = 0.005;
+
+function clampThreshold(value: number) {
+  if (!Number.isFinite(value)) {
+    return defaultThreshold;
+  }
+
+  return Math.min(1, Math.max(0, value));
+}
+
+function formatIntensity(value: number | null) {
+  return value === null || !Number.isFinite(value) ? "Pending" : value.toFixed(6);
+}
 
 function getAnalysisApiUrl() {
   return process.env.NEXT_PUBLIC_ANALYSIS_API_URL ?? "http://localhost:8000";
@@ -234,7 +258,7 @@ function getSliceUrl(
   datasetId: string,
   axis: Axis,
   sliceIndex: number,
-  viewMode: Exclude<ViewMode, "defects">,
+  viewMode: "original" | "segmentation",
 ) {
   const params = new URLSearchParams({ view: viewMode });
 
@@ -247,7 +271,7 @@ async function fetchSliceImage(
   datasetId: string,
   axis: Axis,
   sliceIndex: number,
-  viewMode: Exclude<ViewMode, "defects">,
+  viewMode: "original" | "segmentation",
   signal: AbortSignal,
 ) {
   const response = await fetch(getSliceUrl(datasetId, axis, sliceIndex, viewMode), {
@@ -261,7 +285,7 @@ async function fetchSliceImage(
     const label =
       viewMode === "original"
         ? "Original slice data is not available for this dataset."
-        : `${viewMode} has not been generated for this dataset.`;
+        : "Segmentation has not been generated for this dataset.";
 
     return { status: "empty" as const, imageUrl: null, message: label };
   }
@@ -461,15 +485,6 @@ function ViewModeTabs({ value, onChange }: ViewModeTabsProps) {
           {mode.label}
         </button>
       ))}
-      <span
-        className="view-tab disabled"
-        role="tab"
-        aria-disabled="true"
-        title="Available after defect detection"
-      >
-        Defects
-        <span>Available after defect detection</span>
-      </span>
     </div>
   );
 }
@@ -582,12 +597,12 @@ function SliceViewer({
           >
             <img
               className="slice-image"
-              src={imageUrl}
+              src={viewMode === "mask" && maskPreviewUrl ? maskPreviewUrl : imageUrl}
               alt={`${viewMode} slice ${sliceIndex} on ${axis} axis`}
               onClick={handleClick}
               onPointerMove={handlePointerMove}
             />
-            {overlayEnabled && maskPreviewUrl && viewMode === "original" ? (
+            {overlayEnabled && maskPreviewUrl && viewMode === "overlay" ? (
               <img
                 className="mask-preview-image"
                 src={maskPreviewUrl}
@@ -773,7 +788,7 @@ function VoxelProbe({
         <p className="panel-kicker">Probe</p>
         <h2 id={headingId}>{title}</h2>
       </div>
-      <dl className="metric-list">
+      <dl className="metric-list selected-voxel-readout">
         <div>
           <dt>Coordinate</dt>
           <dd>
@@ -782,7 +797,7 @@ function VoxelProbe({
         </div>
         <div>
           <dt>Intensity</dt>
-          <dd>{intensity ?? "Pending"}</dd>
+          <dd>{formatIntensity(intensity)}</dd>
         </div>
         <div>
           <dt>Mask value</dt>
@@ -799,14 +814,19 @@ function IntensityHistogram({
   message,
   threshold,
   scope,
+  scale,
   onScopeChange,
+  onScaleChange,
 }: IntensityHistogramProps) {
   const [hoveredBin, setHoveredBin] = useState<number | null>(null);
   const width = 640;
   const height = 180;
   const counts = histogram?.bin_counts ?? [];
+  const displayCounts = getScaledHistogramPath(counts, width, height, scale);
   const edges = histogram?.bin_edges ?? [];
-  const maxCount = Math.max(...counts, 1);
+  const visibleCounts =
+    scale === "linear" ? counts : counts.map((count) => (count > 0 ? Math.log10(count + 1) : 0));
+  const maxCount = Math.max(...visibleCounts, 1);
   const thresholdX = (getThresholdPercent(threshold) / 100) * width;
   const hoveredCount = hoveredBin === null ? null : counts[hoveredBin] ?? null;
   const hoveredStart = hoveredBin === null ? null : edges[hoveredBin] ?? null;
@@ -842,6 +862,24 @@ function IntensityHistogram({
           Current slice
         </button>
       </div>
+      <div className="histogram-scope" aria-label="Histogram scale">
+        <button
+          type="button"
+          className={scale === "linear" ? "active" : ""}
+          aria-pressed={scale === "linear"}
+          onClick={() => onScaleChange("linear")}
+        >
+          Linear
+        </button>
+        <button
+          type="button"
+          className={scale === "log" ? "active" : ""}
+          aria-pressed={scale === "log"}
+          onClick={() => onScaleChange("log")}
+        >
+          Log
+        </button>
+      </div>
       <div
         className="histogram"
         role="img"
@@ -858,10 +896,10 @@ function IntensityHistogram({
         {histogram ? (
           <>
             <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
-              <path className="histogram-area" d={getHistogramPath(counts, width, height)} />
+              <path className="histogram-area" d={displayCounts} />
               {counts.map((count, index) => {
                 const barWidth = width / counts.length;
-                const barHeight = (count / maxCount) * height;
+                const barHeight = ((visibleCounts[index] ?? 0) / maxCount) * height;
 
                 return (
                   <rect
@@ -935,21 +973,38 @@ function IntensityHistogram({
 
 function ThresholdSlider({
   value,
+  savedThreshold,
+  recommendedThreshold,
   min,
   max,
   step,
   onChange,
+  onAutoRecommended,
+  onReset,
 }: ThresholdSliderProps) {
+  const thresholdId = "threshold-number-input";
+
   return (
     <section className="dataset-panel compact-panel" aria-labelledby="threshold-heading">
       <div className="section-heading">
         <p className="panel-kicker">Preview threshold</p>
         <h2 id="threshold-heading">Client mask preview</h2>
       </div>
-      <label className="threshold-control">
-        <span>
-          Threshold <strong>{value.toFixed(4)}</strong>
-        </span>
+      <label className="threshold-control" htmlFor={thresholdId}>
+        <span>Threshold</span>
+        <div className="threshold-input-row">
+          <input
+            id={thresholdId}
+            type="number"
+            inputMode="decimal"
+            min={min}
+            max={max}
+            step={step}
+            value={value}
+            onChange={(event) => onChange(clampThreshold(Number(event.target.value)))}
+          />
+          <strong>{value.toFixed(6)}</strong>
+        </div>
         {/* This slider is for a fast client-facing preview only: mask = volume > threshold.
             It is distinct from the full Segmentation Agent batch job, which persists the
             final mask, slice visualization, voxel counts, reproducible script, and report. */}
@@ -962,6 +1017,46 @@ function ThresholdSlider({
           onChange={(event) => onChange(Number(event.target.value))}
         />
       </label>
+      <div className="threshold-actions">
+        <button type="button" onClick={onAutoRecommended}>
+          Auto recommended {recommendedThreshold.toFixed(4)}
+        </button>
+        <button type="button" onClick={onReset}>
+          Reset to saved {savedThreshold.toFixed(4)}
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function SegmentationQualityWarnings({
+  warnings,
+}: {
+  warnings: string[];
+}) {
+  if (warnings.length === 0) {
+    return (
+      <section className="dataset-panel compact-panel" aria-labelledby="quality-heading">
+        <div className="section-heading">
+          <p className="panel-kicker">Quality</p>
+          <h2 id="quality-heading">Segmentation checks</h2>
+        </div>
+        <p className="inline-success">Foreground percentage and sensitivity look stable.</p>
+      </section>
+    );
+  }
+
+  return (
+    <section className="dataset-panel compact-panel" aria-labelledby="quality-heading">
+      <div className="section-heading">
+        <p className="panel-kicker">Quality</p>
+        <h2 id="quality-heading">Segmentation checks</h2>
+      </div>
+      <ul className="quality-warnings">
+        {warnings.map((warning) => (
+          <li key={warning}>{warning}</li>
+        ))}
+      </ul>
     </section>
   );
 }
@@ -1011,6 +1106,7 @@ function StructureHandoff({ job }: { job: AnalysisJob | null }) {
 function SaveSegmentationButton({
   disabled,
   threshold,
+  dirty,
   saving,
   result,
   error,
@@ -1026,6 +1122,9 @@ function SaveSegmentationButton({
           Persists the chosen threshold, mask, slice visualization, voxel counts, and
           summary for this dataset.
         </p>
+        <p className={dirty ? "inline-warning" : "inline-success"}>
+          {dirty ? "Unsaved threshold change" : "Saved threshold is current"}
+        </p>
         {result ? (
           <p className="inline-success">
             Segmentation saved. Foreground {formatVoxelCount(result.foreground_voxel_count)};
@@ -1035,7 +1134,7 @@ function SaveSegmentationButton({
         {error ? <p className="inline-error">{error}</p> : null}
       </div>
       <div className="save-actions">
-        <button type="button" disabled={disabled || saving} onClick={onSave}>
+        <button type="button" disabled={disabled || saving || !dirty} onClick={onSave}>
           {saving ? "Saving segmentation" : "Save segmentation"}
         </button>
         {continueHref ? (
@@ -1058,7 +1157,8 @@ export function SegmentationClient({
   const [viewMode, setViewMode] = useState<Exclude<ViewMode, "defects">>("original");
   const [overlayEnabled, setOverlayEnabled] = useState(true);
   const [overlayOpacity, setOverlayOpacity] = useState(0.42);
-  const [threshold, setThreshold] = useState(0.005);
+  const [threshold, setThreshold] = useState(defaultThreshold);
+  const [savedThreshold, setSavedThreshold] = useState(defaultThreshold);
   const [zoomPercent, setZoomPercent] = useState(100);
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
   const [sliceFetch, setSliceFetch] = useState<SliceFetchState>({
@@ -1079,6 +1179,7 @@ export function SegmentationClient({
     message: null,
   });
   const [histogramScope, setHistogramScope] = useState<HistogramScope>("volume");
+  const [histogramScale, setHistogramScale] = useState<HistogramScale>("linear");
   const [histogramFetch, setHistogramFetch] = useState<HistogramFetchState>({
     status: "idle",
     payload: null,
@@ -1129,6 +1230,10 @@ export function SegmentationClient({
   const maxSliceIndex = getSliceLimit(axis, datasetContext);
   const volumeBounds = getVolumeBounds(datasetContext);
   const boundedSliceIndex = Math.min(sliceIndex, maxSliceIndex);
+  const recommendedThreshold =
+    analysisJob?.segmentation?.threshold ?? savedThreshold ?? defaultThreshold;
+  const thresholdDirty = Math.abs(threshold - savedThreshold) > 1e-9;
+  const qualityWarnings = getSegmentationQualityWarnings(histogramFetch.payload);
   const preparationStatus = analysisJob
     ? formatAnalysisStatus(analysisJob.status)
     : segmentationSave.result
@@ -1171,6 +1276,7 @@ export function SegmentationClient({
 
         if (job.segmentation) {
           setThreshold(job.segmentation.threshold);
+          setSavedThreshold(job.segmentation.threshold);
           setSegmentationSave({
             saving: false,
             result: {
@@ -1188,7 +1294,7 @@ export function SegmentationClient({
         }
 
         if (job.segmentation) {
-          setViewMode("segmentation");
+          setViewMode("overlay");
         }
       })
       .catch((error: unknown) => {
@@ -1227,7 +1333,7 @@ export function SegmentationClient({
       datasetContext.datasetId,
       axis,
       boundedSliceIndex,
-      viewMode,
+      "original",
       controller.signal,
     )
       .then((nextState) => {
@@ -1553,7 +1659,8 @@ export function SegmentationClient({
           result,
           error: null,
         });
-        setViewMode("segmentation");
+        setSavedThreshold(result.threshold);
+        setViewMode("overlay");
       })
       .catch((error: unknown) => {
         setSegmentationSave({
@@ -1766,14 +1873,30 @@ export function SegmentationClient({
               message={histogramFetch.message}
               threshold={threshold}
               scope={histogramScope}
+              scale={histogramScale}
               onScopeChange={setHistogramScope}
+              onScaleChange={setHistogramScale}
             />
-            <ThresholdSlider
+              <ThresholdSlider
               value={threshold}
+              savedThreshold={savedThreshold}
+              recommendedThreshold={recommendedThreshold}
               min={0}
               max={1}
               step={0.001}
-              onChange={setThreshold}
+              onChange={(nextThreshold) => {
+                setThreshold(clampThreshold(nextThreshold));
+                setSegmentationSave((current) => ({
+                  ...current,
+                  result:
+                    Math.abs(clampThreshold(nextThreshold) - savedThreshold) > 1e-9
+                      ? null
+                      : current.result,
+                  error: null,
+                }));
+              }}
+              onAutoRecommended={() => setThreshold(clampThreshold(recommendedThreshold))}
+              onReset={() => setThreshold(savedThreshold)}
             />
           </div>
 
@@ -1787,10 +1910,12 @@ export function SegmentationClient({
               thresholdPreview.background
             }
           />
+          <SegmentationQualityWarnings warnings={qualityWarnings} />
           <StructureHandoff job={analysisJob} />
           <SaveSegmentationButton
             disabled={!datasetContext.datasetId}
             threshold={threshold}
+            dirty={thresholdDirty}
             saving={segmentationSave.saving}
             result={segmentationSave.result}
             error={segmentationSave.error}
