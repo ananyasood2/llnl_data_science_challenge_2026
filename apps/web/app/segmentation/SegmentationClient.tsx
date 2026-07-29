@@ -26,6 +26,14 @@ import {
   type VolumeCoordinate,
   type VoxelCoordinateInput,
 } from "./coordinateNavigation";
+import {
+  formatPercent,
+  formatVoxelCount,
+  getHistogramPath,
+  getThresholdPercent,
+  type HistogramPayload,
+  type HistogramScope,
+} from "./histogramChart";
 
 export type DatasetContext = {
   datasetId: string | null;
@@ -109,9 +117,12 @@ type VoxelNavigationProps = {
 };
 
 type IntensityHistogramProps = {
-  minIntensity: number;
-  maxIntensity: number;
+  histogram: HistogramPayload | null;
+  status: HistogramFetchState["status"];
+  message: string | null;
   threshold: number;
+  scope: HistogramScope;
+  onScopeChange: (scope: HistogramScope) => void;
 };
 
 type ThresholdSliderProps = {
@@ -152,6 +163,12 @@ type ThresholdPreviewState = {
   sliceMaxIntensity: number | null;
   widthPx: number | null;
   heightPx: number | null;
+  message: string | null;
+};
+
+type HistogramFetchState = {
+  status: "idle" | "loading" | "ready" | "error";
+  payload: HistogramPayload | null;
   message: string | null;
 };
 
@@ -323,6 +340,41 @@ async function fetchThresholdPreview(
   };
 }
 
+async function fetchIntensityHistogram(
+  datasetId: string,
+  axis: Axis,
+  sliceIndex: number,
+  threshold: number,
+  scope: HistogramScope,
+  signal: AbortSignal,
+) {
+  const response = await fetch(
+    `${getAnalysisApiUrl()}/v1/datasets/${encodeURIComponent(
+      datasetId,
+    )}/intensity-histogram`,
+    {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        threshold,
+        scope,
+        axis: axis.toLowerCase(),
+        index: scope === "slice" ? sliceIndex : null,
+      }),
+      signal,
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(`Intensity histogram failed with HTTP ${response.status}.`);
+  }
+
+  return (await response.json()) as HistogramPayload;
+}
+
 async function fetchVoxelProbe(
   datasetId: string,
   coordinate: VolumeCoordinate,
@@ -392,10 +444,6 @@ async function fetchLatestAnalysisJob(datasetId: string, signal: AbortSignal) {
   }
 
   return (await response.json()) as AnalysisJob;
-}
-
-function formatVoxelCount(value: number | null) {
-  return typeof value === "number" ? value.toLocaleString() : "Pending";
 }
 
 function ViewModeTabs({ value, onChange }: ViewModeTabsProps) {
@@ -746,14 +794,29 @@ function VoxelProbe({
 }
 
 function IntensityHistogram({
-  minIntensity,
-  maxIntensity,
+  histogram,
+  status,
+  message,
   threshold,
+  scope,
+  onScopeChange,
 }: IntensityHistogramProps) {
-  const thresholdPosition =
-    maxIntensity === minIntensity
-      ? 0
-      : ((threshold - minIntensity) / (maxIntensity - minIntensity)) * 100;
+  const [hoveredBin, setHoveredBin] = useState<number | null>(null);
+  const width = 640;
+  const height = 180;
+  const counts = histogram?.bin_counts ?? [];
+  const edges = histogram?.bin_edges ?? [];
+  const maxCount = Math.max(...counts, 1);
+  const thresholdX = (getThresholdPercent(threshold) / 100) * width;
+  const hoveredCount = hoveredBin === null ? null : counts[hoveredBin] ?? null;
+  const hoveredStart = hoveredBin === null ? null : edges[hoveredBin] ?? null;
+  const hoveredEnd = hoveredBin === null ? null : edges[hoveredBin + 1] ?? null;
+  const foreground = histogram?.foreground_voxel_count ?? null;
+  const background = histogram?.background_voxel_count ?? null;
+  const foregroundPercent = histogram?.foreground_percentage ?? null;
+  const backgroundPercent = histogram?.background_percentage ?? null;
+  const tooltipLeft =
+    hoveredBin === null ? 0 : ((hoveredBin + 0.5) / Math.max(counts.length, 1)) * 100;
 
   return (
     <section className="dataset-panel compact-panel" aria-labelledby="histogram-heading">
@@ -761,14 +824,111 @@ function IntensityHistogram({
         <p className="panel-kicker">Intensity</p>
         <h2 id="histogram-heading">Histogram</h2>
       </div>
-      <div className="histogram" aria-label="Intensity histogram preview">
-        <span style={{ left: `${thresholdPosition}%` }} />
+      <div className="histogram-scope" aria-label="Histogram scope">
+        <button
+          type="button"
+          className={scope === "volume" ? "active" : ""}
+          aria-pressed={scope === "volume"}
+          onClick={() => onScopeChange("volume")}
+        >
+          Full volume
+        </button>
+        <button
+          type="button"
+          className={scope === "slice" ? "active" : ""}
+          aria-pressed={scope === "slice"}
+          onClick={() => onScopeChange("slice")}
+        >
+          Current slice
+        </button>
       </div>
-      <div className="histogram-labels">
-        <span>{minIntensity}</span>
-        <strong>{threshold.toFixed(4)}</strong>
-        <span>{maxIntensity}</span>
+      <div
+        className="histogram"
+        role="img"
+        aria-label={`256-bin normalized intensity histogram from 0 to 1. Threshold ${threshold.toFixed(
+          4,
+        )}. Foreground ${formatPercent(foregroundPercent)}; background ${formatPercent(
+          backgroundPercent,
+        )}.`}
+      >
+        {status === "error" ? <p className="histogram-status">{message}</p> : null}
+        {status === "loading" && !histogram ? (
+          <p className="histogram-status">Loading histogram.</p>
+        ) : null}
+        {histogram ? (
+          <>
+            <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
+              <path className="histogram-area" d={getHistogramPath(counts, width, height)} />
+              {counts.map((count, index) => {
+                const barWidth = width / counts.length;
+                const barHeight = (count / maxCount) * height;
+
+                return (
+                  <rect
+                    key={`${edges[index]}-${index}`}
+                    className="histogram-hover-target"
+                    x={index * barWidth}
+                    y={height - barHeight}
+                    width={Math.max(barWidth, 1)}
+                    height={Math.max(barHeight, 1)}
+                    tabIndex={0}
+                    aria-label={`Intensity ${edges[index]?.toFixed(3)} to ${edges[
+                      index + 1
+                    ]?.toFixed(3)}: ${formatVoxelCount(count)} voxels`}
+                    onMouseEnter={() => setHoveredBin(index)}
+                    onMouseLeave={() => setHoveredBin(null)}
+                    onFocus={() => setHoveredBin(index)}
+                    onBlur={() => setHoveredBin(null)}
+                  />
+                );
+              })}
+              <line
+                className="histogram-threshold-line"
+                x1={thresholdX}
+                x2={thresholdX}
+                y1={0}
+                y2={height}
+              />
+            </svg>
+            <div
+              className="histogram-threshold-label"
+              style={{ left: `${getThresholdPercent(threshold)}%` }}
+            >
+              Threshold {threshold.toFixed(4)}
+            </div>
+            {hoveredBin !== null &&
+            hoveredStart !== null &&
+            hoveredEnd !== null &&
+            hoveredCount !== null ? (
+              <div className="histogram-tooltip" style={{ left: `${tooltipLeft}%` }}>
+                <strong>
+                  {hoveredStart.toFixed(3)}-{hoveredEnd.toFixed(3)}
+                </strong>
+                <span>{formatVoxelCount(hoveredCount)} voxels</span>
+              </div>
+            ) : null}
+          </>
+        ) : null}
       </div>
+      <div className="histogram-axis" aria-hidden="true">
+        <span>0</span>
+        <span>Normalized intensity</span>
+        <span>1</span>
+      </div>
+      <dl className="histogram-summary">
+        <div>
+          <dt>Foreground</dt>
+          <dd>
+            {formatPercent(foregroundPercent)} ({formatVoxelCount(foreground)})
+          </dd>
+        </div>
+        <div>
+          <dt>Background</dt>
+          <dd>
+            {formatPercent(backgroundPercent)} ({formatVoxelCount(background)})
+          </dd>
+        </div>
+      </dl>
     </section>
   );
 }
@@ -916,6 +1076,12 @@ export function SegmentationClient({
     sliceMaxIntensity: null,
     widthPx: null,
     heightPx: null,
+    message: null,
+  });
+  const [histogramScope, setHistogramScope] = useState<HistogramScope>("volume");
+  const [histogramFetch, setHistogramFetch] = useState<HistogramFetchState>({
+    status: "idle",
+    payload: null,
     message: null,
   });
   const [probe, setProbe] = useState<VoxelProbeProps>({
@@ -1163,6 +1329,57 @@ export function SegmentationClient({
       }
     };
   }, [axis, boundedSliceIndex, datasetContext.datasetId, threshold]);
+
+  useEffect(() => {
+    if (!datasetContext.datasetId) {
+      return;
+    }
+
+    const datasetId = datasetContext.datasetId;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => {
+      setHistogramFetch((current) => ({
+        ...current,
+        status: "loading",
+        message: "Updating histogram.",
+      }));
+
+      fetchIntensityHistogram(
+        datasetId,
+        axis,
+        boundedSliceIndex,
+        threshold,
+        histogramScope,
+        controller.signal,
+      )
+        .then((payload) => {
+          setHistogramFetch({
+            status: "ready",
+            payload,
+            message: null,
+          });
+        })
+        .catch((error: unknown) => {
+          if (controller.signal.aborted) {
+            return;
+          }
+
+          setHistogramFetch((current) => ({
+            ...current,
+            status: "error",
+            message:
+              error instanceof Error
+                ? error.message
+                : "Unable to update intensity histogram.",
+          }));
+        });
+    }, 175);
+
+    return () => {
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [axis, boundedSliceIndex, datasetContext.datasetId, histogramScope, threshold]);
 
   useEffect(() => {
     return () => {
@@ -1544,26 +1761,29 @@ export function SegmentationClient({
 
           <div className="dataset-two-column">
             <IntensityHistogram
-              minIntensity={thresholdPreview.sliceMinIntensity ?? -0.0031}
-              maxIntensity={thresholdPreview.sliceMaxIntensity ?? 0.0153}
+              histogram={histogramFetch.payload}
+              status={histogramFetch.status}
+              message={histogramFetch.message}
               threshold={threshold}
+              scope={histogramScope}
+              onScopeChange={setHistogramScope}
             />
             <ThresholdSlider
               value={threshold}
-              min={0.0005}
-              max={0.012}
-              step={0.0005}
+              min={0}
+              max={1}
+              step={0.001}
               onChange={setThreshold}
             />
           </div>
 
           <VoxelCounts
             foreground={
-              segmentationSave.result?.foreground_voxel_count ??
+              histogramFetch.payload?.foreground_voxel_count ??
               thresholdPreview.foreground
             }
             background={
-              segmentationSave.result?.background_voxel_count ??
+              histogramFetch.payload?.background_voxel_count ??
               thresholdPreview.background
             }
           />

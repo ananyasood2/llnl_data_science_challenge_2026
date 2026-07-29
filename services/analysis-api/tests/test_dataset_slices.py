@@ -314,6 +314,116 @@ def test_threshold_preview_returns_400_for_out_of_range_index() -> None:
     assert "out of range" in response.json()["detail"]
 
 
+def test_intensity_histogram_returns_full_volume_bins_and_percentages() -> None:
+    intake_response = asyncio.run(
+        _post_intake(
+            "npyVolume",
+            [
+                (
+                    "volume.npy",
+                    _npy_bytes(np.linspace(0.0, 1.0, 512, dtype=np.float32).reshape((8, 8, 8))),
+                    "application/octet-stream",
+                )
+            ],
+        )
+    )
+    dataset_id = intake_response.json()["dataset_id"]
+    transport = httpx.ASGITransport(app=app)
+
+    async def post_histogram() -> httpx.Response:
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            return await client.post(
+                f"/v1/datasets/{dataset_id}/intensity-histogram",
+                json={"threshold": 0.5, "scope": "volume"},
+            )
+
+    response = asyncio.run(post_histogram())
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["dataset_id"] == dataset_id
+    assert payload["scope"] == "volume"
+    assert payload["axis"] is None
+    assert payload["index"] is None
+    assert len(payload["bin_edges"]) == 257
+    assert len(payload["bin_counts"]) == 256
+    assert payload["bin_edges"][0] == 0.0
+    assert payload["bin_edges"][-1] == 1.0
+    assert sum(payload["bin_counts"]) == 512
+    assert payload["threshold"] == 0.5
+    assert payload["foreground_voxel_count"] == 256
+    assert payload["background_voxel_count"] == 256
+    assert payload["foreground_percentage"] == 50.0
+    assert payload["background_percentage"] == 50.0
+
+
+def test_intensity_histogram_can_scope_to_current_slice() -> None:
+    volume = (np.arange(24, dtype=np.float32) / 23).reshape((2, 3, 4))
+    intake_response = asyncio.run(
+        _post_intake(
+            "npyVolume",
+            [
+                (
+                    "volume.npy",
+                    _npy_bytes(volume),
+                    "application/octet-stream",
+                )
+            ],
+        )
+    )
+    dataset_id = intake_response.json()["dataset_id"]
+    transport = httpx.ASGITransport(app=app)
+
+    async def post_histogram() -> httpx.Response:
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            return await client.post(
+                f"/v1/datasets/{dataset_id}/intensity-histogram",
+                json={"threshold": 0.5, "scope": "slice", "axis": "z", "index": 1},
+            )
+
+    response = asyncio.run(post_histogram())
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["scope"] == "slice"
+    assert payload["axis"] == "z"
+    assert payload["index"] == 1
+    assert sum(payload["bin_counts"]) == 12
+    assert payload["foreground_voxel_count"] == 12
+    assert payload["background_voxel_count"] == 0
+    assert payload["foreground_percentage"] == 100.0
+    assert payload["background_percentage"] == 0.0
+
+
+def test_intensity_histogram_returns_400_for_out_of_range_slice() -> None:
+    intake_response = asyncio.run(
+        _post_intake(
+            "npyVolume",
+            [
+                (
+                    "volume.npy",
+                    _npy_bytes(np.arange(24, dtype=np.float32).reshape((2, 3, 4))),
+                    "application/octet-stream",
+                )
+            ],
+        )
+    )
+    dataset_id = intake_response.json()["dataset_id"]
+    transport = httpx.ASGITransport(app=app)
+
+    async def post_histogram() -> httpx.Response:
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            return await client.post(
+                f"/v1/datasets/{dataset_id}/intensity-histogram",
+                json={"threshold": 0.5, "scope": "slice", "axis": "z", "index": 2},
+            )
+
+    response = asyncio.run(post_histogram())
+
+    assert response.status_code == 400
+    assert "out of range" in response.json()["detail"]
+
+
 def test_voxel_probe_returns_real_intensity_and_mask_value() -> None:
     intake_response = asyncio.run(
         _post_intake(

@@ -59,6 +59,34 @@ class ThresholdPreviewRequest(BaseModel):
     index: int
 
 
+HistogramScope = Literal["volume", "slice"]
+
+
+class IntensityHistogramRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    threshold: float
+    scope: HistogramScope = "volume"
+    axis: SliceAxis = "z"
+    index: int | None = None
+
+
+class IntensityHistogramResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    dataset_id: str
+    scope: HistogramScope
+    axis: SliceAxis | None
+    index: int | None
+    bin_edges: list[float]
+    bin_counts: list[int]
+    threshold: float
+    foreground_voxel_count: int
+    background_voxel_count: int
+    foreground_percentage: float
+    background_percentage: float
+
+
 class SegmentationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -443,6 +471,60 @@ async def save_segmentation(
         mask_path="segmentation.npy",
         slice_preview_path="segmentation_slice_preview.png",
         demo_mode=get_settings().demo_mode,
+    )
+
+
+@router.post("/{dataset_id}/intensity-histogram", response_model=IntensityHistogramResponse)
+async def get_intensity_histogram(
+    dataset_id: str,
+    request: IntensityHistogramRequest,
+) -> IntensityHistogramResponse:
+    """Return a compact intensity histogram for the persisted normalized volume."""
+    volume = _get_existing_cached_volume(dataset_id)
+    histogram_source: np.ndarray = volume
+    axis: SliceAxis | None = None
+    index: int | None = None
+
+    if request.scope == "slice":
+        if request.index is None:
+            raise HTTPException(
+                status_code=422,
+                detail="Slice histogram requests require an index.",
+            )
+
+        max_index = _axis_size(volume, request.axis) - 1
+
+        if request.index < 0 or request.index > max_index:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Slice index {request.index} is out of range for axis "
+                    f"{request.axis}; expected 0..{max_index}."
+                ),
+            )
+
+        histogram_source = _extract_slice(volume, request.axis, request.index)
+        axis = request.axis
+        index = request.index
+
+    counts, edges = np.histogram(histogram_source, bins=256, range=(0.0, 1.0))
+    foreground_voxel_count = int(np.count_nonzero(histogram_source > request.threshold))
+    background_voxel_count = int(histogram_source.size - foreground_voxel_count)
+    total_voxels = max(int(histogram_source.size), 1)
+    foreground_percentage = (foreground_voxel_count / total_voxels) * 100.0
+
+    return IntensityHistogramResponse(
+        dataset_id=dataset_id,
+        scope=request.scope,
+        axis=axis,
+        index=index,
+        bin_edges=[float(edge) for edge in edges],
+        bin_counts=[int(count) for count in counts],
+        threshold=request.threshold,
+        foreground_voxel_count=foreground_voxel_count,
+        background_voxel_count=background_voxel_count,
+        foreground_percentage=foreground_percentage,
+        background_percentage=100.0 - foreground_percentage,
     )
 
 

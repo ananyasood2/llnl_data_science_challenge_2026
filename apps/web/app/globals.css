@@ -987,24 +987,85 @@ input[type="file"] {
 
 .histogram {
   position: relative;
-  height: 8rem;
-  overflow: hidden;
-  background:
-    linear-gradient(to top, rgb(37 99 235 / 50%) 0 18%, transparent 18%),
-    linear-gradient(to right, #dbeafe, #bfdbfe, #a7f3d0, #fde68a, #fecaca);
+  min-height: 11.5rem;
+  overflow: visible;
+  background: #f8fbfe;
   border: 1px solid #cfdbe8;
   border-radius: 0.65rem;
+  padding: 0.75rem;
 }
 
-.histogram span {
+.histogram svg {
+  display: block;
+  width: 100%;
+  height: 8.5rem;
+  overflow: visible;
+}
+
+.histogram-area {
+  fill: rgb(14 116 144 / 28%);
+  stroke: #0e7490;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.histogram-hover-target {
+  fill: transparent;
+  outline: none;
+}
+
+.histogram-hover-target:focus {
+  fill: rgb(20 32 51 / 8%);
+}
+
+.histogram-threshold-line {
+  stroke: #b42318;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.histogram-threshold-label {
   position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 2px;
-  background: #142033;
+  top: 0.25rem;
+  transform: translateX(-50%);
+  padding: 0.2rem 0.35rem;
+  background: #fff;
+  border: 1px solid #f0b8b2;
+  border-radius: 0.35rem;
+  color: #8f1f14;
+  font-size: 0.7rem;
+  font-weight: 760;
+  white-space: nowrap;
 }
 
-.histogram-labels {
+.histogram-tooltip {
+  position: absolute;
+  top: 2.6rem;
+  z-index: 2;
+  transform: translateX(-50%);
+  display: grid;
+  gap: 0.2rem;
+  min-width: 8.25rem;
+  padding: 0.45rem 0.55rem;
+  background: #142033;
+  border-radius: 0.45rem;
+  color: #fff;
+  font-size: 0.72rem;
+  pointer-events: none;
+}
+
+.histogram-tooltip span {
+  color: #dbeafe;
+}
+
+.histogram-status {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.histogram-axis {
   display: flex;
   justify-content: space-between;
   gap: 0.75rem;
@@ -1014,8 +1075,56 @@ input[type="file"] {
   font-weight: 700;
 }
 
-.histogram-labels strong {
+.histogram-scope {
+  display: flex;
+  gap: 0.35rem;
+  margin-bottom: 0.7rem;
+}
+
+.histogram-scope button {
+  padding: 0.45rem 0.65rem;
+  color: var(--muted);
+  background: #fff;
+  border: 1px solid #d9e3ee;
+  border-radius: 0.45rem;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 750;
+}
+
+.histogram-scope button.active {
+  color: #0f3f4d;
+  background: #e6f6fa;
+  border-color: #9fd5df;
+}
+
+.histogram-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.6rem;
+  margin: 0.8rem 0 0;
+}
+
+.histogram-summary div {
+  padding: 0.6rem;
+  background: #fff;
+  border: 1px solid #e2eaf3;
+  border-radius: 0.5rem;
+}
+
+.histogram-summary dt {
+  color: var(--muted);
+  font-size: 0.65rem;
+  font-weight: 750;
+  text-transform: uppercase;
+}
+
+.histogram-summary dd {
+  margin: 0.25rem 0 0;
   color: var(--ink);
+  font-size: 0.82rem;
+  font-weight: 760;
 }
 
 @media (max-width: 760px) {
