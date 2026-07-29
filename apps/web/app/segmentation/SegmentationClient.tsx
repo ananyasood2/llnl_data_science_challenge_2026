@@ -36,6 +36,14 @@ import {
   type HistogramPayload,
   type HistogramScope,
 } from "./histogramChart";
+import {
+  getDefectsEmptyStateMessage,
+  getSliceFetchView,
+  primaryViewModes,
+  segmentationComparisonModes,
+  type PrimaryViewMode,
+  type SegmentationComparisonMode,
+} from "./viewModes";
 
 export type DatasetContext = {
   datasetId: string | null;
@@ -51,13 +59,12 @@ export type DatasetContext = {
   scaleUnit: "micron" | "voxel";
 };
 
-type ViewMode = "original" | "overlay" | "mask" | "defects";
-
 type SliceViewerProps = {
   axis: Axis;
   sliceIndex: number;
   maxSliceIndex: number;
-  viewMode: Exclude<ViewMode, "defects">;
+  viewMode: PrimaryViewMode;
+  comparisonMode: SegmentationComparisonMode;
   imageUrl: string | null;
   status: SliceFetchState["status"];
   message: string | null;
@@ -79,8 +86,8 @@ type SliceViewerProps = {
 };
 
 type ViewModeTabsProps = {
-  value: Exclude<ViewMode, "defects">;
-  onChange: (mode: Exclude<ViewMode, "defects">) => void;
+  value: PrimaryViewMode;
+  onChange: (mode: PrimaryViewMode) => void;
 };
 
 type ZoomPanControlsProps = {
@@ -92,8 +99,10 @@ type ZoomPanControlsProps = {
 };
 
 type SegmentationOverlayToggleProps = {
+  comparisonMode: SegmentationComparisonMode;
   enabled: boolean;
   opacity: number;
+  onComparisonModeChange: (mode: SegmentationComparisonMode) => void;
   onChange: (enabled: boolean) => void;
   onOpacityChange: (opacity: number) => void;
 };
@@ -227,15 +236,6 @@ type AnalysisJob = {
   } | null;
 };
 
-const viewModes: {
-  id: Exclude<ViewMode, "defects">;
-  label: string;
-}[] = [
-  { id: "original", label: "Original" },
-  { id: "overlay", label: "Overlay" },
-  { id: "mask", label: "Mask" },
-];
-
 const defaultThreshold = 0.005;
 
 function clampThreshold(value: number) {
@@ -258,7 +258,7 @@ function getSliceUrl(
   datasetId: string,
   axis: Axis,
   sliceIndex: number,
-  viewMode: "original" | "segmentation",
+  viewMode: "original" | "segmentation" | "skeleton",
 ) {
   const params = new URLSearchParams({ view: viewMode });
 
@@ -271,7 +271,7 @@ async function fetchSliceImage(
   datasetId: string,
   axis: Axis,
   sliceIndex: number,
-  viewMode: "original" | "segmentation",
+  viewMode: "original" | "segmentation" | "skeleton",
   signal: AbortSignal,
 ) {
   const response = await fetch(getSliceUrl(datasetId, axis, sliceIndex, viewMode), {
@@ -285,7 +285,9 @@ async function fetchSliceImage(
     const label =
       viewMode === "original"
         ? "Original slice data is not available for this dataset."
-        : "Segmentation has not been generated for this dataset.";
+        : viewMode === "skeleton"
+          ? "Skeleton artifact is not available for this dataset."
+          : "Segmentation has not been generated for this dataset.";
 
     return { status: "empty" as const, imageUrl: null, message: label };
   }
@@ -473,7 +475,7 @@ async function fetchLatestAnalysisJob(datasetId: string, signal: AbortSignal) {
 function ViewModeTabs({ value, onChange }: ViewModeTabsProps) {
   return (
     <div className="view-tabs" role="tablist" aria-label="Slice view mode">
-      {viewModes.map((mode) => (
+      {primaryViewModes.map((mode) => (
         <button
           type="button"
           role="tab"
@@ -494,6 +496,7 @@ function SliceViewer({
   sliceIndex,
   maxSliceIndex,
   viewMode,
+  comparisonMode,
   imageUrl,
   status,
   message,
@@ -586,7 +589,12 @@ function SliceViewer({
       </div>
 
       <div className="slice-canvas">
-        {status === "ready" && imageUrl ? (
+        {viewMode === "defects" ? (
+          <div className="slice-state slice-state-empty" role="status">
+            <strong>Defects unavailable</strong>
+            <span>{getDefectsEmptyStateMessage()}</span>
+          </div>
+        ) : status === "ready" && imageUrl ? (
           <div
             className="slice-image-layer"
             style={{
@@ -597,12 +605,21 @@ function SliceViewer({
           >
             <img
               className="slice-image"
-              src={viewMode === "mask" && maskPreviewUrl ? maskPreviewUrl : imageUrl}
+              src={
+                viewMode === "segmentation" &&
+                comparisonMode === "mask" &&
+                maskPreviewUrl
+                  ? maskPreviewUrl
+                  : imageUrl
+              }
               alt={`${viewMode} slice ${sliceIndex} on ${axis} axis`}
               onClick={handleClick}
               onPointerMove={handlePointerMove}
             />
-            {overlayEnabled && maskPreviewUrl && viewMode === "overlay" ? (
+            {overlayEnabled &&
+            maskPreviewUrl &&
+            viewMode === "segmentation" &&
+            comparisonMode === "overlay" ? (
               <img
                 className="mask-preview-image"
                 src={maskPreviewUrl}
@@ -689,21 +706,37 @@ function ZoomPanControls({
 }
 
 function SegmentationOverlayToggle({
+  comparisonMode,
   enabled,
   opacity,
+  onComparisonModeChange,
   onChange,
   onOpacityChange,
 }: SegmentationOverlayToggleProps) {
   return (
     <section className="dataset-panel compact-panel" aria-labelledby="overlay-heading">
       <div className="section-heading">
-        <p className="panel-kicker">Overlay</p>
-        <h2 id="overlay-heading">Segmentation mask</h2>
+        <p className="panel-kicker">Segmentation</p>
+        <h2 id="overlay-heading">Comparison mode</h2>
+      </div>
+      <div className="histogram-scope" aria-label="Segmentation comparison mode">
+        {segmentationComparisonModes.map((mode) => (
+          <button
+            type="button"
+            key={mode.id}
+            className={comparisonMode === mode.id ? "active" : ""}
+            aria-pressed={comparisonMode === mode.id}
+            onClick={() => onComparisonModeChange(mode.id)}
+          >
+            {mode.label}
+          </button>
+        ))}
       </div>
       <label className="toggle-row">
         <input
           type="checkbox"
           checked={enabled}
+          disabled={comparisonMode !== "overlay"}
           onChange={(event) => onChange(event.target.checked)}
         />
         <span>Show mask over original slice</span>
@@ -1154,7 +1187,9 @@ export function SegmentationClient({
 }) {
   const [axis, setAxis] = useState<Axis>("Z");
   const [sliceIndex, setSliceIndex] = useState(128);
-  const [viewMode, setViewMode] = useState<Exclude<ViewMode, "defects">>("original");
+  const [viewMode, setViewMode] = useState<PrimaryViewMode>("original");
+  const [comparisonMode, setComparisonMode] =
+    useState<SegmentationComparisonMode>("overlay");
   const [overlayEnabled, setOverlayEnabled] = useState(true);
   const [overlayOpacity, setOverlayOpacity] = useState(0.42);
   const [threshold, setThreshold] = useState(defaultThreshold);
@@ -1294,7 +1329,7 @@ export function SegmentationClient({
         }
 
         if (job.segmentation) {
-          setViewMode("overlay");
+          setViewMode("segmentation");
         }
       })
       .catch((error: unknown) => {
@@ -1319,6 +1354,12 @@ export function SegmentationClient({
       return;
     }
 
+    const sliceView = getSliceFetchView(viewMode, comparisonMode);
+
+    if (!sliceView) {
+      return;
+    }
+
     const controller = new AbortController();
 
     // Clear any previous image before starting the external slice request.
@@ -1333,7 +1374,7 @@ export function SegmentationClient({
       datasetContext.datasetId,
       axis,
       boundedSliceIndex,
-      "original",
+      sliceView,
       controller.signal,
     )
       .then((nextState) => {
@@ -1365,7 +1406,7 @@ export function SegmentationClient({
         URL.revokeObjectURL(localObjectUrl);
       }
     };
-  }, [axis, boundedSliceIndex, datasetContext.datasetId, viewMode]);
+  }, [axis, boundedSliceIndex, comparisonMode, datasetContext.datasetId, viewMode]);
 
   useEffect(() => {
     let localObjectUrl: string | null = null;
@@ -1660,7 +1701,7 @@ export function SegmentationClient({
           error: null,
         });
         setSavedThreshold(result.threshold);
-        setViewMode("overlay");
+        setViewMode("segmentation");
       })
       .catch((error: unknown) => {
         setSegmentationSave({
@@ -1783,13 +1824,16 @@ export function SegmentationClient({
               sliceIndex={boundedSliceIndex}
               maxSliceIndex={maxSliceIndex}
               viewMode={viewMode}
+              comparisonMode={comparisonMode}
               imageUrl={sliceFetch.imageUrl}
               status={sliceFetch.status}
               message={sliceFetch.message}
               zoomPercent={zoomPercent}
               panOffset={panOffset}
               maskPreviewUrl={thresholdPreview.imageUrl}
-              maskPreviewLoading={thresholdPreview.status === "loading"}
+              maskPreviewLoading={
+                viewMode === "segmentation" && thresholdPreview.status === "loading"
+              }
               overlayEnabled={overlayEnabled}
               overlayOpacity={overlayOpacity}
               onAxisChange={(nextAxis) => {
@@ -1827,12 +1871,16 @@ export function SegmentationClient({
                   setPanOffset({ x: 0, y: 0 });
                 }}
               />
-              <SegmentationOverlayToggle
-                enabled={overlayEnabled}
-                opacity={overlayOpacity}
-                onChange={setOverlayEnabled}
-                onOpacityChange={setOverlayOpacity}
-              />
+              {viewMode === "segmentation" ? (
+                <SegmentationOverlayToggle
+                  comparisonMode={comparisonMode}
+                  enabled={overlayEnabled}
+                  opacity={overlayOpacity}
+                  onComparisonModeChange={setComparisonMode}
+                  onChange={setOverlayEnabled}
+                  onOpacityChange={setOverlayOpacity}
+                />
+              ) : null}
               <VoxelProbe
                 headingId={probe.headingId}
                 title={probe.title}

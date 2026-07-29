@@ -294,26 +294,20 @@ async def get_dataset_slice(
     view: SliceView = Query("original"),
 ) -> Response:
     """Return a normalized PNG slice for a persisted dataset volume."""
-    if view == "skeleton":
-        raise HTTPException(
-            status_code=404,
-            detail=f"{view} view is reserved for the structure-analysis page.",
-        )
-
     storage_root = get_settings().upload_storage_root
     dataset_dir = storage_root / dataset_id
 
     if not dataset_dir.is_dir():
         raise HTTPException(status_code=404, detail="Dataset not found.")
 
-    if view == "segmentation":
-        segmentation_path = dataset_dir / "segmentation.npy"
-        if not segmentation_path.is_file():
+    if view in {"segmentation", "skeleton"}:
+        artifact_path = dataset_dir / f"{view}.npy"
+        if not artifact_path.is_file():
             raise HTTPException(
                 status_code=404,
-                detail="segmentation view has not been generated for this dataset.",
+                detail=f"{view} view has not been generated for this dataset.",
             )
-        volume = _as_zyx_volume(np.load(segmentation_path, allow_pickle=False))
+        volume = _as_zyx_volume(np.load(artifact_path, allow_pickle=False))
     else:
         volume = _load_cached_original_volume(str(storage_root), dataset_id)
     max_index = _axis_size(volume, axis) - 1

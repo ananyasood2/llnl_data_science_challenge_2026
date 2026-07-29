@@ -230,7 +230,7 @@ def test_segmentation_view_returns_404_until_generated() -> None:
     )
 
 
-def test_skeleton_slice_view_is_reserved_for_structure_page() -> None:
+def test_skeleton_view_returns_404_until_artifact_exists() -> None:
     intake_response = asyncio.run(
         _post_intake(
             "npyVolume",
@@ -249,8 +249,36 @@ def test_skeleton_slice_view_is_reserved_for_structure_page() -> None:
 
     assert response.status_code == 404
     assert response.json()["detail"] == (
-        "skeleton view is reserved for the structure-analysis page."
+        "skeleton view has not been generated for this dataset."
     )
+
+
+def test_skeleton_view_returns_persisted_artifact_slice(
+    _upload_storage_root,
+) -> None:
+    intake_response = asyncio.run(
+        _post_intake(
+            "npyVolume",
+            [
+                (
+                    "volume.npy",
+                    _npy_bytes(np.zeros((2, 3, 4), dtype=np.float32)),
+                    "application/octet-stream",
+                )
+            ],
+        )
+    )
+    dataset_id = intake_response.json()["dataset_id"]
+    skeleton = np.zeros((2, 3, 4), dtype=bool)
+    skeleton[1, 2, 3] = True
+    np.save(_upload_storage_root / dataset_id / "skeleton.npy", skeleton)
+
+    response = asyncio.run(_get_slice(dataset_id, "z", 1, view="skeleton"))
+
+    _assert_png_response(response)
+    assert response.headers["x-slice-axis"] == "z"
+    assert response.headers["x-slice-index"] == "1"
+    assert response.headers["x-view"] == "skeleton"
 
 
 def test_threshold_preview_returns_mask_png_and_full_volume_counts() -> None:
