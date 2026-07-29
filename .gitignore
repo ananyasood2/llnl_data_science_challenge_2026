@@ -193,3 +193,6 @@ ehthumbs.db
 Thumbs.db
 
 result
+
+# Reproducible CT analysis caches (can be hundreds of MB)
+data/*/processed/

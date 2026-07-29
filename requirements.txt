@@ -3,3 +3,8 @@ matplotlib
 fastmcp
 scikit-image
 tifffile
+scipy
+plotly
+dash
+pandas
+skan
