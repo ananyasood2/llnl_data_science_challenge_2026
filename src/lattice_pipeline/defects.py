@@ -139,8 +139,12 @@ def _severity(status: str, magnitude: float = 0.0) -> str:
     return "low"
 
 
-def _confidence_from_distance(value: float, cutoff: float, scale: float = 0.25) -> float:
-    """Smooth confidence away from a cutoff, capped below absolute certainty."""
+def _rule_strength_from_distance(
+    value: float,
+    cutoff: float,
+    scale: float = 0.25,
+) -> float:
+    """Return an uncalibrated decision-margin score for a triggered rule."""
     width = max(abs(cutoff) * scale, 1e-6)
     return float(np.clip(0.5 + 0.48 * abs(value - cutoff) / width, 0.5, 0.98))
 
@@ -153,7 +157,7 @@ def _near_crop(point_xyz: np.ndarray, shape_zyx: Sequence[int], margin: float) -
 def _defect_record(
     defect_id: str,
     status: str,
-    confidence: float,
+    rule_strength: float,
     location_xyz: np.ndarray,
     spacing_xyz: np.ndarray,
     kind: str,
@@ -167,7 +171,7 @@ def _defect_record(
         "defect_id": defect_id,
         "type": status,
         "severity": severity,
-        "confidence": round(float(np.clip(confidence, 0, 1)), 4),
+        "rule_strength": round(float(np.clip(rule_strength, 0, 1)), 4),
         "location_voxel": [_json_number(v) for v in location_xyz],
         "location_mm": [_json_number(v) for v in location_xyz * spacing_xyz],
         "slice_index": int(np.clip(round(float(location_xyz[2])), 0, np.iinfo(np.int32).max)),
@@ -218,8 +222,9 @@ def classify_defects(
     -------
     dict
         ``nodes``, ``struts``, ``components``, ``defects`` and ``summary``.
-        Every node/strut has exactly one ``status``.  Low confidence is stored
-        independently and never overwrites a specific status with uncertain.
+        Every node/strut has exactly one ``status``. ``rule_strength`` is only
+        populated when a non-healthy rule fires. It is a decision-margin score,
+        not a calibrated probability that the classification is correct.
     """
     cfg = config or DefectConfig()
     mask = np.asarray(mask, dtype=bool)
@@ -349,13 +354,13 @@ def classify_defects(
                 interior_endpoint = endpoint_xyz[int(endpoint_index[best])]
 
         status = "healthy"
-        confidence = 1.0
+        rule_strength: float | None = None
         location = midpoint
         magnitude = 0.0
 
         if present_fraction < cfg.missing_present_fraction:
             status = "missing"
-            confidence = _confidence_from_distance(
+            rule_strength = _rule_strength_from_distance(
                 present_fraction, cfg.missing_present_fraction, scale=0.6
             )
             location = samples[int(np.argmax(distances))]
@@ -363,7 +368,9 @@ def classify_defects(
             # A present centerline belonging to any non-largest 26-connected
             # component is, by definition, a disconnected fragment.
             status = "disconnected"
-            confidence = float(np.clip(0.65 + 0.33 * present_fraction, 0, 0.98))
+            rule_strength = float(
+                np.clip(0.65 + 0.33 * present_fraction, 0, 0.98)
+            )
         elif (
             present_fraction
             < cfg.missing_present_fraction + cfg.uncertain_missing_margin
@@ -373,14 +380,14 @@ def classify_defects(
             )
         ):
             status = "uncertain"
-            confidence = 0.5
+            rule_strength = 0.5
             location = interior_endpoint if interior_endpoint is not None else midpoint
         elif (
             interior_endpoint is not None
             and cfg.broken_min_present_fraction <= present_fraction <= cfg.broken_max_present_fraction
         ):
             status = "broken"
-            confidence = float(
+            rule_strength = float(
                 np.clip(
                     0.6
                     + 0.35
@@ -398,27 +405,76 @@ def classify_defects(
             magnitude = abs(thickness_ratio - 1)
             if thickness_ratio < cfg.thin_ratio:
                 status = "thin"
-                confidence = _confidence_from_distance(thickness_ratio, cfg.thin_ratio)
+                rule_strength = _rule_strength_from_distance(
+                    thickness_ratio,
+                    cfg.thin_ratio,
+                )
             elif thickness_ratio > cfg.thick_ratio:
                 status = "thick"
-                confidence = _confidence_from_distance(thickness_ratio, cfg.thick_ratio)
+                rule_strength = _rule_strength_from_distance(
+                    thickness_ratio,
+                    cfg.thick_ratio,
+                )
             elif (
                 abs(thickness_ratio - cfg.thin_ratio) <= cfg.thickness_uncertain_band
                 or abs(thickness_ratio - cfg.thick_ratio) <= cfg.thickness_uncertain_band
             ):
                 status = "uncertain"
-                confidence = 0.5
+                rule_strength = 0.5
+
+        finite_distances = distances[np.isfinite(distances)]
+        median_skeleton_distance = (
+            float(np.median(finite_distances))
+            if finite_distances.size
+            else None
+        )
+        p90_skeleton_distance = (
+            float(np.quantile(finite_distances, 0.9))
+            if finite_distances.size
+            else None
+        )
+        mask_material_fraction = float(np.mean(mask_values))
+        skeleton_support_fraction = float(np.mean(skeleton_near))
 
         item.update(
             {
                 "status": status,
-                "confidence": round(confidence, 4),
+                "rule_strength": (
+                    round(rule_strength, 4)
+                    if rule_strength is not None
+                    else None
+                ),
                 "component_id": component_id,
                 "measured_thickness_um": (
                     round(measured_um, 3) if measured_um is not None else None
                 ),
                 "design_thickness_um": round(nominal_um, 3) if nominal_um is not None else None,
+                "thickness_ratio": (
+                    round(thickness_ratio, 4)
+                    if thickness_ratio is not None
+                    else None
+                ),
                 "present_fraction": round(present_fraction, 4),
+                "mask_material_fraction": round(mask_material_fraction, 4),
+                "skeleton_support_fraction": round(
+                    skeleton_support_fraction,
+                    4,
+                ),
+                "median_skeleton_distance_vox": (
+                    round(median_skeleton_distance, 4)
+                    if median_skeleton_distance is not None
+                    else None
+                ),
+                "p90_skeleton_distance_vox": (
+                    round(p90_skeleton_distance, 4)
+                    if p90_skeleton_distance is not None
+                    else None
+                ),
+                "decision_thresholds": {
+                    "missing_present_fraction": cfg.missing_present_fraction,
+                    "thin_ratio": cfg.thin_ratio,
+                    "thick_ratio": cfg.thick_ratio,
+                },
                 "polyline": [
                     [_json_number(v) for v in a],
                     [_json_number(v) for v in b],
@@ -427,11 +483,12 @@ def classify_defects(
         )
         output_struts.append(item)
         if status != "healthy":
+            assert rule_strength is not None
             defects.append(
                 _defect_record(
                     f"d{len(defects) + 1:04d}",
                     status,
-                    confidence,
+                    rule_strength,
                     location,
                     spacing,
                     "strut",
@@ -441,8 +498,26 @@ def classify_defects(
                     "um",
                     {
                         "present_fraction": round(present_fraction, 4),
+                        "mask_material_fraction": round(
+                            mask_material_fraction,
+                            4,
+                        ),
+                        "skeleton_support_fraction": round(
+                            skeleton_support_fraction,
+                            4,
+                        ),
+                        "median_skeleton_distance_vox": (
+                            round(median_skeleton_distance, 4)
+                            if median_skeleton_distance is not None
+                            else None
+                        ),
                         "design_thickness_um": (
                             round(nominal_um, 3) if nominal_um is not None else None
+                        ),
+                        "thickness_ratio": (
+                            round(thickness_ratio, 4)
+                            if thickness_ratio is not None
+                            else None
                         ),
                     },
                 )
@@ -473,7 +548,7 @@ def classify_defects(
         )
 
         status = "healthy"
-        confidence = 1.0
+        rule_strength: float | None = None
         # Some graph files retain geometric helper/corner junctions that are
         # not referenced by any design strut. They are not expected material.
         if degree == 0:
@@ -482,16 +557,22 @@ def classify_defects(
         # evidence of a snapped strut merely because the skeleton stops nearby.
         elif degree == 1 and not material_present:
             status = "healthy"
-            confidence = 0.85
         elif not material_present:
             status = "missing"
-            confidence = float(np.clip(0.55 + 0.08 * (skeleton_distance - cfg.node_presence_radius_vox), 0.55, 0.98))
+            rule_strength = float(
+                np.clip(
+                    0.55
+                    + 0.08 * (skeleton_distance - cfg.node_presence_radius_vox),
+                    0.55,
+                    0.98,
+                )
+            )
         elif component_id is not None and component_id != main_label and main_label:
             status = "disconnected"
-            confidence = 0.9
+            rule_strength = 0.9
         elif degree >= 2 and endpoint_distance <= cfg.endpoint_to_node_radius_vox:
             status = "uncertain" if _near_crop(point, mask.shape, cfg.crop_margin_vox) else "broken"
-            confidence = 0.5 if status == "uncertain" else float(
+            rule_strength = 0.5 if status == "uncertain" else float(
                 np.clip(0.95 - 0.4 * endpoint_distance / cfg.endpoint_to_node_radius_vox, 0.55, 0.95)
             )
 
@@ -501,17 +582,40 @@ def classify_defects(
                 "y": _json_number(point[1]),
                 "z": _json_number(point[2]),
                 "status": status,
-                "confidence": round(confidence, 4),
+                "rule_strength": (
+                    round(rule_strength, 4)
+                    if rule_strength is not None
+                    else None
+                ),
                 "component_id": component_id,
+                "mask_present": mask_present,
+                "skeleton_near": skeleton_near,
+                "skeleton_distance_vox": (
+                    round(float(skeleton_distance), 4)
+                    if np.isfinite(skeleton_distance)
+                    else None
+                ),
+                "endpoint_distance_vox": (
+                    round(endpoint_distance, 4)
+                    if np.isfinite(endpoint_distance)
+                    else None
+                ),
+                "decision_thresholds": {
+                    "node_presence_radius_vox": cfg.node_presence_radius_vox,
+                    "endpoint_to_node_radius_vox": (
+                        cfg.endpoint_to_node_radius_vox
+                    ),
+                },
             }
         )
         output_nodes.append(item)
         if status != "healthy":
+            assert rule_strength is not None
             defects.append(
                 _defect_record(
                     f"d{len(defects) + 1:04d}",
                     status,
-                    confidence,
+                    rule_strength,
                     point,
                     spacing,
                     "node",
@@ -519,7 +623,21 @@ def classify_defects(
                     _severity(status),
                     skeleton_distance,
                     "voxel",
-                    {"design_degree": degree},
+                    {
+                        "design_degree": degree,
+                        "mask_present": mask_present,
+                        "skeleton_near": skeleton_near,
+                        "skeleton_distance_vox": (
+                            round(float(skeleton_distance), 4)
+                            if np.isfinite(skeleton_distance)
+                            else None
+                        ),
+                        "endpoint_distance_vox": (
+                            round(endpoint_distance, 4)
+                            if np.isfinite(endpoint_distance)
+                            else None
+                        ),
+                    },
                 )
             )
 
@@ -544,7 +662,7 @@ def classify_defects(
             continue
         component_zyx = np.argwhere(component_labels == component["id"])
         location = np.mean(component_zyx, axis=0)[::-1]
-        confidence = float(
+        rule_strength = float(
             np.clip(
                 0.65
                 + 0.25
@@ -558,7 +676,7 @@ def classify_defects(
             _defect_record(
                 f"d{len(defects) + 1:04d}",
                 "disconnected",
-                confidence,
+                rule_strength,
                 location,
                 spacing,
                 "component",

@@ -26,7 +26,7 @@ from .validation import (
     mark_unreliable_boundary_faces,
 )
 
-ANALYSIS_VERSION = 6
+ANALYSIS_VERSION = 7
 
 
 def _source_signature(path: Path) -> dict[str, Any]:

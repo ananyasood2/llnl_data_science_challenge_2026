@@ -4,6 +4,12 @@ Status: Phase 1 repository and coordinate-flow audit
 Audit date: 2026-07-28  
 Scientific behavior changed in this phase: no
 
+> Current canonical assessment: [STRUT_NODE_VALIDATION.md](STRUT_NODE_VALIDATION.md).
+> The detailed text below preserves the first audit snapshot, including a
+> temporary invalid-threshold cache state that is no longer current. The
+> reproducible current result is
+> `outputs/verification/verification_summary.json`.
+
 ## Executive finding
 
 The application cannot currently verify that a selected 3D defect corresponds
@@ -344,7 +350,7 @@ This result is contradicted by explicit design ground truth.
 | Disconnected strut | Questionable | Skeleton component rule only; no crop-boundary exclusion |
 | Thin/thick strut | Unsupported | Physical spacing is estimated and anisotropy unknown |
 | Boundary uncertain | Rule-based interpretation | Heuristic face downgrade, no explicit cut-region model |
-| Severity/confidence | Uncalibrated rule output | No empirical calibration or evidence-status model |
+| Severity/rule strength | Uncalibrated decision-margin output; null for healthy elements | No empirical calibration or evidence-status model |
 
 Earlier valid-threshold aggregate CAD metrics are encouraging, but they do not
 verify every displayed candidate against raw CT, mask, skeleton, graph,

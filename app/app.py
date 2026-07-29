@@ -13,7 +13,9 @@ from typing import Any
 
 import numpy as np
 import plotly.graph_objects as go
-from dash import Dash, Input, Output, dcc, html
+from dash import Dash, Input, Output, State, ctx, dcc, html
+from plotly.subplots import make_subplots
+from scipy import ndimage
 from skimage import measure
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -24,6 +26,7 @@ for path in (str(REPO_ROOT), str(SRC_ROOT)):
 
 from app.datasets import DATASETS, get_dataset  # noqa: E402
 from lattice_pipeline.cache import ensure_analysis, load_cached_arrays  # noqa: E402
+from lattice_pipeline.io import load_volume  # noqa: E402
 
 
 STATUS_ORDER = ("healthy", "thick", "thin", "missing", "uncertain")
@@ -112,6 +115,27 @@ def _format_xyz(point_xyz: Any) -> str:
     if point.shape != (3,) or not np.all(np.isfinite(point)):
         raise ValueError(f"Expected one finite xyz coordinate, got {point_xyz!r}")
     return f"({point[0]:.2f}, {point[1]:.2f}, {point[2]:.2f})"
+
+
+def _rule_strength(record: dict[str, Any]) -> float | None:
+    """Return a non-healthy rule score, including legacy cache compatibility."""
+
+    if record.get("status") == "healthy":
+        return None
+    value = record.get("rule_strength")
+    if value is None:
+        value = record.get("confidence")
+    if value is None:
+        return None
+    numeric = float(value)
+    return numeric if math.isfinite(numeric) else None
+
+
+def _rule_strength_text(record: dict[str, Any]) -> str:
+    value = _rule_strength(record)
+    if value is None:
+        return "no defect rule triggered"
+    return f"rule strength {value:.2f}"
 
 
 def _strut_geometry(record: dict[str, Any]) -> dict[str, Any]:
@@ -325,7 +349,7 @@ def _strut_trace(
             "strut",
             record["id"],
             status,
-            record.get("confidence", 1.0),
+            _rule_strength_text(record),
             geometry["midpoint"][0],
             geometry["midpoint"][1],
             geometry["midpoint"][2],
@@ -382,7 +406,7 @@ def _strut_trace(
             "<br>end XYZ (%{customdata[11]:.2f}, %{customdata[12]:.2f}, "
             "%{customdata[13]:.2f})"
             "<br>length %{customdata[7]:.2f} voxels"
-            "<br>confidence %{customdata[3]:.2f}<extra></extra>"
+            "<br>%{customdata[3]}<extra></extra>"
         ),
         name=f"{STATUS_LABELS[status]} struts",
         showlegend=False,
@@ -419,7 +443,7 @@ def _node_trace(
                 "node",
                 record["id"],
                 status,
-                record.get("confidence", 1.0),
+                _rule_strength_text(record),
                 record["x"],
                 record["y"],
                 record["z"],
@@ -431,7 +455,7 @@ def _node_trace(
             "<br>ID %{customdata[1]}"
             "<br>XYZ (%{customdata[4]:.2f}, %{customdata[5]:.2f}, "
             "%{customdata[6]:.2f}) voxels"
-            "<br>confidence %{customdata[3]:.2f}<extra></extra>"
+            "<br>%{customdata[3]}<extra></extra>"
         ),
         name=f"{STATUS_LABELS[status]} nodes",
         showlegend=False,
@@ -454,6 +478,744 @@ def _clicked_element(
         None,
     )
     return (kind, item) if item is not None else None
+
+
+def _selected_element(
+    analysis: dict[str, Any],
+    reference: dict[str, Any] | None,
+) -> tuple[str, dict[str, Any]] | None:
+    """Resolve a compact browser selection against the current analysis."""
+
+    if not reference or reference.get("kind") not in {"strut", "node"}:
+        return None
+    kind = str(reference["kind"])
+    collection = analysis["struts"] if kind == "strut" else analysis["nodes"]
+    identifier = str(reference.get("id", ""))
+    item = next(
+        (record for record in collection if str(record["id"]) == identifier),
+        None,
+    )
+    return (kind, item) if item is not None else None
+
+
+def _nearest_element(
+    analysis: dict[str, Any],
+    kind: str,
+    position_xyz: Any,
+) -> tuple[tuple[str, dict[str, Any]], float]:
+    """Return the requested element nearest an XYZ voxel position."""
+
+    point = np.asarray(position_xyz, dtype=float)
+    if point.shape != (3,) or not np.all(np.isfinite(point)):
+        raise ValueError("Position must contain three finite XYZ voxel coordinates.")
+    if kind == "node":
+        records = analysis["nodes"]
+        if not records:
+            raise ValueError("This analysis contains no nodes.")
+        positions = np.asarray(
+            [[record["x"], record["y"], record["z"]] for record in records],
+            dtype=float,
+        )
+        distances = np.linalg.norm(positions - point[None, :], axis=1)
+    elif kind == "strut":
+        records = analysis["struts"]
+        if not records:
+            raise ValueError("This analysis contains no struts.")
+        distances = []
+        for record in records:
+            polyline = np.asarray(record["polyline"], dtype=float)
+            best = math.inf
+            for start, end in zip(polyline[:-1], polyline[1:]):
+                direction = end - start
+                denominator = float(np.dot(direction, direction))
+                fraction = (
+                    0.0
+                    if denominator <= 1e-12
+                    else float(np.clip(np.dot(point - start, direction) / denominator, 0, 1))
+                )
+                best = min(best, float(np.linalg.norm(point - (start + fraction * direction))))
+            distances.append(best)
+        distances = np.asarray(distances, dtype=float)
+    else:
+        raise ValueError("Element type must be 'strut' or 'node'.")
+
+    index = int(np.argmin(distances))
+    return (kind, records[index]), float(distances[index])
+
+
+def _element_by_id(
+    analysis: dict[str, Any],
+    kind: str,
+    identifier: Any,
+) -> tuple[str, dict[str, Any]]:
+    """Resolve an exact node or strut ID with a user-facing error."""
+
+    text = str(identifier).strip()
+    if not text:
+        raise ValueError("Enter an element ID or all three XYZ coordinates.")
+    collection = analysis["struts"] if kind == "strut" else analysis["nodes"]
+    item = next((record for record in collection if str(record["id"]) == text), None)
+    if item is None:
+        raise ValueError(f"No {kind} with ID {text} exists in this dataset.")
+    return kind, item
+
+
+def _evidence_focus(
+    analysis: dict[str, Any],
+    selected: tuple[str, dict[str, Any]],
+) -> np.ndarray:
+    """Choose the detector's evidence location, falling back to element geometry."""
+
+    kind, item = selected
+    defect = next(
+        (
+            record
+            for record in analysis.get("defects", [])
+            if record.get("affected_element", {}).get("kind") == kind
+            and str(record.get("affected_element", {}).get("id")) == str(item["id"])
+        ),
+        None,
+    )
+    if defect is not None:
+        location = np.asarray(defect.get("location_voxel"), dtype=float)
+        if location.shape == (3,) and np.all(np.isfinite(location)):
+            return location
+    if kind == "strut":
+        return np.asarray(_strut_geometry(item)["midpoint"], dtype=float)
+    return np.asarray([item["x"], item["y"], item["z"]], dtype=float)
+
+
+@lru_cache(maxsize=2)
+def _raw_volume(dataset_key: str) -> np.ndarray:
+    """Memory-map a source CT volume for responsive evidence slices."""
+
+    return load_volume(get_dataset(dataset_key)["volume"], mmap=True)
+
+
+def _polyline_plane_intersections(
+    points_xyz: np.ndarray,
+    *,
+    fixed_axis: int,
+    fixed_value: float,
+    horizontal_axis: int,
+    vertical_axis: int,
+) -> np.ndarray:
+    """Return where a 3D polyline intersects one fixed orthogonal slice."""
+
+    intersections: list[np.ndarray] = []
+    tolerance = 1e-8
+    for start, end in zip(points_xyz[:-1], points_xyz[1:]):
+        start_value = float(start[fixed_axis])
+        end_value = float(end[fixed_axis])
+        delta = end_value - start_value
+        if abs(delta) <= tolerance:
+            if abs(start_value - fixed_value) <= 0.5:
+                intersections.extend((start, end))
+            continue
+        fraction = (fixed_value - start_value) / delta
+        if -tolerance <= fraction <= 1.0 + tolerance:
+            intersections.append(start + np.clip(fraction, 0.0, 1.0) * (end - start))
+    if not intersections:
+        return np.empty((0, 2), dtype=float)
+    points = np.unique(np.round(np.asarray(intersections), 8), axis=0)
+    return points[:, [horizontal_axis, vertical_axis]]
+
+
+def _strut_cross_section(
+    volume: np.ndarray,
+    item: dict[str, Any],
+    focus_xyz: np.ndarray,
+    *,
+    radius_voxels: int = 14,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Resample a raw-CT plane perpendicular to a strut at the focus point."""
+
+    points = np.asarray(item["polyline"], dtype=float)
+    best_direction: np.ndarray | None = None
+    best_distance = math.inf
+    for start, end in zip(points[:-1], points[1:]):
+        direction = end - start
+        denominator = float(np.dot(direction, direction))
+        if denominator <= 1e-12:
+            continue
+        fraction = float(
+            np.clip(np.dot(focus_xyz - start, direction) / denominator, 0, 1)
+        )
+        closest = start + fraction * direction
+        distance = float(np.linalg.norm(focus_xyz - closest))
+        if distance < best_distance:
+            best_distance = distance
+            best_direction = direction
+    if best_direction is None:
+        raise ValueError(f"Strut {item.get('id', 'unknown')} has no usable segment")
+
+    direction = best_direction / np.linalg.norm(best_direction)
+    reference = np.zeros(3, dtype=float)
+    reference[int(np.argmin(np.abs(direction)))] = 1.0
+    basis_u = np.cross(direction, reference)
+    basis_u /= np.linalg.norm(basis_u)
+    basis_v = np.cross(direction, basis_u)
+    basis_v /= np.linalg.norm(basis_v)
+
+    offsets = np.arange(-radius_voxels, radius_voxels + 1, dtype=float)
+    grid_u, grid_v = np.meshgrid(offsets, offsets)
+    sample_xyz = (
+        focus_xyz[None, None, :]
+        + grid_u[..., None] * basis_u
+        + grid_v[..., None] * basis_v
+    )
+    image = ndimage.map_coordinates(
+        volume,
+        [
+            sample_xyz[..., 2],
+            sample_xyz[..., 1],
+            sample_xyz[..., 0],
+        ],
+        order=1,
+        mode="constant",
+        cval=np.nan,
+        prefilter=False,
+    )
+    return np.asarray(image), offsets
+
+
+def _diameter_circle(radius_voxels: float) -> tuple[np.ndarray, np.ndarray]:
+    angles = np.linspace(0.0, 2.0 * np.pi, 181)
+    return radius_voxels * np.cos(angles), radius_voxels * np.sin(angles)
+
+
+def _evidence_figure(
+    dataset_key: str,
+    analysis: dict[str, Any],
+    selected: tuple[str, dict[str, Any]] | None,
+) -> go.Figure:
+    """Build full-resolution orthogonal raw-CT evidence for one element."""
+
+    if selected is None:
+        figure = _empty_figure(
+            "Enter an ID or XYZ position, or click an element in the 3D view."
+        )
+        figure.update_layout(height=500)
+        return figure
+
+    volume = _raw_volume(dataset_key)
+    kind, item = selected
+    focus = _evidence_focus(analysis, selected)
+    shape_xyz = np.asarray(volume.shape[::-1], dtype=int)
+    focus_index = np.clip(np.rint(focus).astype(int), 0, shape_xyz - 1)
+
+    if kind == "strut":
+        expected = np.asarray(item["polyline"], dtype=float)
+        radius = int(
+            np.clip(
+                max(30.0, np.max(np.ptp(expected, axis=0)) / 2.0 + 10.0),
+                30,
+                72,
+            )
+        )
+        element_title = f"Strut {item['id']}"
+    else:
+        expected = np.asarray([[item["x"], item["y"], item["z"]]], dtype=float)
+        radius = 30
+        element_title = f"Node {item['id']}"
+
+    def bounds(center: int, maximum: int) -> tuple[int, int]:
+        return max(0, center - radius), min(maximum, center + radius + 1)
+
+    x0, x1 = bounds(int(focus_index[0]), int(shape_xyz[0]))
+    y0, y1 = bounds(int(focus_index[1]), int(shape_xyz[1]))
+    z0, z1 = bounds(int(focus_index[2]), int(shape_xyz[2]))
+    x_values = np.arange(x0, x1)
+    y_values = np.arange(y0, y1)
+    z_values = np.arange(z0, z1)
+    xy = np.asarray(volume[int(focus_index[2]), y0:y1, x0:x1])
+    xz = np.asarray(volume[z0:z1, int(focus_index[1]), x0:x1])
+    yz = np.asarray(volume[z0:z1, y0:y1, int(focus_index[0])])
+    panels = (
+        (
+            "XY",
+            xy,
+            x_values,
+            y_values,
+            expected[:, 0],
+            expected[:, 1],
+            2,
+            float(focus_index[2]),
+            0,
+            1,
+        ),
+        (
+            "XZ",
+            xz,
+            x_values,
+            z_values,
+            expected[:, 0],
+            expected[:, 2],
+            1,
+            float(focus_index[1]),
+            0,
+            2,
+        ),
+        (
+            "YZ",
+            yz,
+            y_values,
+            z_values,
+            expected[:, 1],
+            expected[:, 2],
+            0,
+            float(focus_index[0]),
+            1,
+            2,
+        ),
+    )
+    cross_section: np.ndarray | None = None
+    cross_offsets: np.ndarray | None = None
+    if kind == "strut":
+        cross_section, cross_offsets = _strut_cross_section(
+            volume,
+            item,
+            focus.astype(float),
+        )
+    evidence_arrays = [panel[1].ravel() for panel in panels]
+    if cross_section is not None:
+        evidence_arrays.append(cross_section.ravel())
+    sampled = np.concatenate(evidence_arrays)
+    finite = sampled[np.isfinite(sampled)]
+    zmin, zmax = (
+        (float(np.percentile(finite, 1)), float(np.percentile(finite, 99.5)))
+        if finite.size
+        else (0.0, 1.0)
+    )
+    if zmax <= zmin:
+        zmax = zmin + 1.0
+
+    slice_text: tuple[str, ...] = (
+        f"XY · Z={focus_index[2]}",
+        f"XZ · Y={focus_index[1]}",
+        f"YZ · X={focus_index[0]}",
+    )
+    if cross_section is not None:
+        slice_text += ("Perpendicular to strut · diameter review",)
+    figure = make_subplots(
+        rows=1,
+        cols=len(slice_text),
+        subplot_titles=slice_text,
+        horizontal_spacing=0.035,
+    )
+    threshold = float(analysis["meta"]["threshold"])
+    for column, (
+        _plane,
+        image,
+        horizontal,
+        vertical,
+        line_x,
+        line_y,
+        fixed_axis,
+        fixed_value,
+        horizontal_axis,
+        vertical_axis,
+    ) in enumerate(
+        panels,
+        start=1,
+    ):
+        figure.add_trace(
+            go.Heatmap(
+                z=image,
+                x=horizontal,
+                y=vertical,
+                coloraxis="coloraxis",
+                hovertemplate=(
+                    "horizontal %{x}<br>vertical %{y}<br>raw intensity %{z}<extra></extra>"
+                ),
+            ),
+            row=1,
+            col=column,
+        )
+        figure.add_trace(
+            go.Contour(
+                z=image,
+                x=horizontal,
+                y=vertical,
+                contours={
+                    "start": threshold,
+                    "end": threshold,
+                    "size": max(abs(threshold), 1.0),
+                    "coloring": "lines",
+                },
+                line={"color": "#55d6be", "width": 1.4},
+                showscale=False,
+                hoverinfo="skip",
+                name="active threshold",
+                showlegend=column == 1,
+            ),
+            row=1,
+            col=column,
+        )
+        figure.add_trace(
+            go.Scatter(
+                x=line_x,
+                y=line_y,
+                mode="lines+markers" if kind == "strut" else "markers",
+                line={"color": "#ff4868", "width": 3, "dash": "dash"},
+                marker={
+                    "color": "#ff4868",
+                    "size": 9 if kind == "node" else 5,
+                    "symbol": "x",
+                },
+                name="expected geometry",
+                showlegend=column == 1,
+                hovertemplate="expected XYZ projection<extra></extra>",
+            ),
+            row=1,
+            col=column,
+        )
+        intersections = _polyline_plane_intersections(
+            expected,
+            fixed_axis=fixed_axis,
+            fixed_value=fixed_value,
+            horizontal_axis=horizontal_axis,
+            vertical_axis=vertical_axis,
+        )
+        figure.add_trace(
+            go.Scatter(
+                x=intersections[:, 0],
+                y=intersections[:, 1],
+                mode="markers",
+                marker={
+                    "color": "#ffb547",
+                    "size": 10,
+                    "symbol": "diamond-open",
+                    "line": {"width": 2},
+                },
+                name="expected slice intersection",
+                showlegend=column == 1,
+                hovertemplate="expected geometry intersects this slice<extra></extra>",
+            ),
+            row=1,
+            col=column,
+        )
+        focus_horizontal = focus_index[0] if column < 3 else focus_index[1]
+        focus_vertical = focus_index[1] if column == 1 else focus_index[2]
+        figure.add_trace(
+            go.Scatter(
+                x=[focus_horizontal],
+                y=[focus_vertical],
+                mode="markers",
+                marker={
+                    "color": "#ffffff",
+                    "size": 11,
+                    "symbol": "circle-open",
+                    "line": {"width": 2},
+                },
+                name="inspection point",
+                showlegend=column == 1,
+                hoverinfo="skip",
+            ),
+            row=1,
+            col=column,
+        )
+        figure.update_xaxes(
+            title_text=panels[column - 1][0][0 if column < 3 else 1],
+            range=[float(horizontal[0]), float(horizontal[-1])],
+            row=1,
+            col=column,
+        )
+        figure.update_yaxes(
+            title_text=panels[column - 1][0][1],
+            range=[float(vertical[0]), float(vertical[-1])],
+            scaleanchor=f"x{column if column > 1 else ''}",
+            scaleratio=1,
+            row=1,
+            col=column,
+        )
+
+    if cross_section is not None and cross_offsets is not None:
+        cross_column = 4
+        figure.add_trace(
+            go.Heatmap(
+                z=cross_section,
+                x=cross_offsets,
+                y=cross_offsets,
+                coloraxis="coloraxis",
+                hovertemplate=(
+                    "cross-section u %{x:.1f}<br>v %{y:.1f}"
+                    "<br>raw intensity %{z:.1f}<extra></extra>"
+                ),
+            ),
+            row=1,
+            col=cross_column,
+        )
+        figure.add_trace(
+            go.Contour(
+                z=cross_section,
+                x=cross_offsets,
+                y=cross_offsets,
+                contours={
+                    "start": threshold,
+                    "end": threshold,
+                    "size": max(abs(threshold), 1.0),
+                    "coloring": "lines",
+                },
+                line={"color": "#55d6be", "width": 1.4},
+                showscale=False,
+                hoverinfo="skip",
+                name="active threshold",
+                showlegend=False,
+            ),
+            row=1,
+            col=cross_column,
+        )
+        voxel_size_um = float(analysis["meta"]["voxel_size_mm"]) * 1000.0
+        design_um = item.get("design_thickness_um")
+        measured_um = item.get("measured_thickness_um")
+        for diameter_um, color, label, dash in (
+            (design_um, "#ff4868", "expected diameter", "dash"),
+            (measured_um, "#a978ff", "detector diameter estimate", "dot"),
+        ):
+            if diameter_um is None or voxel_size_um <= 0:
+                continue
+            circle_x, circle_y = _diameter_circle(
+                float(diameter_um) / (2.0 * voxel_size_um)
+            )
+            figure.add_trace(
+                go.Scatter(
+                    x=circle_x,
+                    y=circle_y,
+                    mode="lines",
+                    line={"color": color, "width": 2, "dash": dash},
+                    name=label,
+                    showlegend=True,
+                    hovertemplate=(
+                        f"{label}: {float(diameter_um):.0f} μm<extra></extra>"
+                    ),
+                ),
+                row=1,
+                col=cross_column,
+            )
+        figure.add_trace(
+            go.Scatter(
+                x=[0.0],
+                y=[0.0],
+                mode="markers",
+                marker={
+                    "color": "#ffffff",
+                    "size": 10,
+                    "symbol": "circle-open",
+                    "line": {"width": 2},
+                },
+                name="inspection point",
+                showlegend=False,
+                hoverinfo="skip",
+            ),
+            row=1,
+            col=cross_column,
+        )
+        figure.update_xaxes(
+            title_text="cross-section u (voxels)",
+            range=[float(cross_offsets[0]), float(cross_offsets[-1])],
+            row=1,
+            col=cross_column,
+        )
+        figure.update_yaxes(
+            title_text="cross-section v (voxels)",
+            range=[float(cross_offsets[0]), float(cross_offsets[-1])],
+            scaleanchor="x4",
+            scaleratio=1,
+            row=1,
+            col=cross_column,
+        )
+
+    figure.update_layout(
+        height=540,
+        title={
+            "text": (
+                f"{element_title} · raw CT evidence at "
+                f"XYZ {_format_xyz(focus_index)}"
+            ),
+            "x": 0.02,
+            "font": {"size": 16, "color": "#edf5f8"},
+        },
+        paper_bgcolor="#071018",
+        plot_bgcolor="#071018",
+        font={"color": "#9fb3bf"},
+        margin={"l": 58, "r": 28, "t": 82, "b": 60},
+        coloraxis={
+            "colorscale": "Gray",
+            "cmin": zmin,
+            "cmax": zmax,
+            "colorbar": {
+                "title": "raw",
+                "thickness": 9,
+                "len": 0.72,
+                "x": 1.015,
+            },
+        },
+        legend={
+            "orientation": "h",
+            "x": 0,
+            "y": -0.16,
+            "font": {"size": 10},
+        },
+        uirevision=(
+            f"evidence:{dataset_key}:{analysis['meta']['cache_fingerprint']}:"
+            f"{kind}:{item['id']}"
+        ),
+    )
+    return figure
+
+
+def _evidence_details(
+    analysis: dict[str, Any],
+    selected: tuple[str, dict[str, Any]] | None,
+) -> list[Any]:
+    """Describe the detector result without overstating visual verification."""
+
+    if selected is None:
+        return [
+            html.Span(
+                "The red overlay is expected design geometry; cyan is the active "
+                "full-resolution threshold contour.",
+                className="selection-hint",
+            )
+        ]
+    kind, item = selected
+    status = str(item["status"])
+    review_label = (
+        "Not manually verified" if status == "healthy" else "Needs review"
+    )
+    details: list[Any] = [
+        html.Span(
+            f"{STATUS_LABELS.get(status, status.title())} candidate",
+            className=f"selection-status status-{status}",
+        ),
+        html.Strong(f"{kind.title()} ID {item['id']}"),
+        html.Span(
+            review_label,
+            className=(
+                "review-status review-neutral"
+                if status == "healthy"
+                else "review-status review-needed"
+            ),
+        ),
+        html.Span(_rule_strength_text(item)),
+    ]
+    if kind == "strut":
+        details.extend(
+            [
+                html.Span(
+                    f"combined path support "
+                    f"{100 * float(item.get('present_fraction', 0)):.1f}%"
+                ),
+                html.Span(
+                    f"mask material "
+                    f"{100 * float(item.get('mask_material_fraction', 0)):.1f}%"
+                ),
+                html.Span(
+                    f"skeleton-near "
+                    f"{100 * float(item.get('skeleton_support_fraction', 0)):.1f}%"
+                ),
+            ]
+        )
+        median_distance = item.get("median_skeleton_distance_vox")
+        if median_distance is not None:
+            details.append(
+                html.Span(
+                    f"median skeleton distance {float(median_distance):.2f} "
+                    "analysis voxels"
+                )
+            )
+        measured = item.get("measured_thickness_um")
+        design = item.get("design_thickness_um")
+        ratio = item.get("thickness_ratio")
+        if measured is not None:
+            details.append(html.Span(f"diameter estimate {float(measured):.0f} μm"))
+        if design is not None:
+            details.append(html.Span(f"nominal diameter {float(design):.0f} μm"))
+        if ratio is not None:
+            details.append(html.Span(f"thickness ratio {float(ratio):.2f}×"))
+        thresholds = item.get("decision_thresholds", {})
+        if status == "missing" and thresholds.get(
+            "missing_present_fraction"
+        ) is not None:
+            details.append(
+                html.Span(
+                    "missing rule < "
+                    f"{100 * float(thresholds['missing_present_fraction']):.1f}% "
+                    "path support"
+                )
+            )
+        elif status == "thick" and thresholds.get("thick_ratio") is not None:
+            details.append(
+                html.Span(
+                    f"thick rule > {float(thresholds['thick_ratio']):.2f}×"
+                )
+            )
+        elif status == "thin" and thresholds.get("thin_ratio") is not None:
+            details.append(
+                html.Span(
+                    f"thin rule < {float(thresholds['thin_ratio']):.2f}×"
+                )
+            )
+    else:
+        details.extend(
+            [
+                html.Span(
+                    "material at expected voxel: "
+                    + ("yes" if item.get("mask_present") else "no")
+                ),
+                html.Span(
+                    "skeleton within rule radius: "
+                    + ("yes" if item.get("skeleton_near") else "no")
+                ),
+            ]
+        )
+        skeleton_distance = item.get("skeleton_distance_vox")
+        if skeleton_distance is not None:
+            details.append(
+                html.Span(
+                    f"skeleton distance {float(skeleton_distance):.2f} "
+                    "analysis voxels"
+                )
+            )
+        node_radius = item.get("decision_thresholds", {}).get(
+            "node_presence_radius_vox"
+        )
+        if node_radius is not None:
+            details.append(
+                html.Span(
+                    f"node presence radius {float(node_radius):.2f} "
+                    "analysis voxels"
+                )
+            )
+    details.extend(
+        [
+            html.Span(
+                f"threshold {float(analysis['meta']['threshold']):g}",
+                className="threshold-readout",
+            ),
+            html.Span(
+                (
+                    "The red line is a 3D projection; the gold diamond is where "
+                    "the expected geometry intersects each fixed slice. A long "
+                    "bright line in one view and a dot in another can be normal "
+                    "for an angled strut—the three panels are not independent "
+                    "votes. "
+                )
+                + (
+                    "The perpendicular panel supports diameter review, but its "
+                    "circles use estimated spacing and one active threshold; "
+                    "the purple circle is the coarse path-level detector estimate, "
+                    "not a measurement of this single cross-section. "
+                    if kind == "strut"
+                    else ""
+                )
+                + "This remains a candidate until the evidence is reviewed.",
+                className="evidence-caveat",
+            ),
+        ]
+    )
+    return details
 
 
 def _selection_highlight(
@@ -754,7 +1516,7 @@ def _selection_details(
             className=f"selection-status status-{status}",
         ),
         html.Strong(f"ID {item['id']}"),
-        html.Span(f"confidence {float(item.get('confidence', 1.0)):.2f}"),
+        html.Span(_rule_strength_text(item)),
     ]
     if kind == "strut":
         geometry = _strut_geometry(item)
@@ -775,6 +1537,9 @@ def _selection_details(
             details.append(html.Span(f"measured {float(measured):.0f} μm"))
         if design is not None:
             details.append(html.Span(f"design {float(design):.0f} μm"))
+        ratio = item.get("thickness_ratio")
+        if ratio is not None:
+            details.append(html.Span(f"ratio {float(ratio):.2f}×"))
     else:
         details.append(
             html.Span(
@@ -816,6 +1581,7 @@ def create_app(default_dataset: str = "missing_struts") -> Dash:
 
     app.layout = html.Main(
         [
+            dcc.Store(id="selected-element"),
             html.Header(
                 [
                     html.Div(
@@ -1019,9 +1785,200 @@ def create_app(default_dataset: str = "missing_struts") -> Dash:
                 ],
                 className="model-panel",
             ),
+            html.Section(
+                [
+                    html.Div(
+                        [
+                            html.Div(
+                                [
+                                    html.Div(
+                                        "RAW CT CANDIDATE REVIEW",
+                                        className="eyebrow",
+                                    ),
+                                    html.H2("Inspect a node or strut"),
+                                    html.P(
+                                        "Enter an exact element ID or an XYZ voxel "
+                                        "position. Positions resolve to the nearest "
+                                        "requested graph element. Detector labels are "
+                                        "candidates, not verified conclusions.",
+                                        className="verification-copy",
+                                    ),
+                                ],
+                                className="verification-heading",
+                            ),
+                            html.Div(
+                                [
+                                    html.Label(
+                                        [
+                                            html.Span(
+                                                "Element",
+                                                className="toolbar-label",
+                                            ),
+                                            dcc.Dropdown(
+                                                id="lookup-kind",
+                                                options=[
+                                                    {
+                                                        "label": "Strut",
+                                                        "value": "strut",
+                                                    },
+                                                    {
+                                                        "label": "Node",
+                                                        "value": "node",
+                                                    },
+                                                ],
+                                                value="strut",
+                                                clearable=False,
+                                                searchable=False,
+                                                className="lookup-dropdown",
+                                            ),
+                                        ],
+                                        className="lookup-field lookup-kind",
+                                    ),
+                                    html.Label(
+                                        [
+                                            html.Span(
+                                                "ID",
+                                                className="toolbar-label",
+                                            ),
+                                            dcc.Input(
+                                                id="lookup-id",
+                                                type="text",
+                                                placeholder="e.g. 1284",
+                                                debounce=False,
+                                                className="lookup-input lookup-id",
+                                            ),
+                                        ],
+                                        className="lookup-field",
+                                    ),
+                                    html.Span("or", className="lookup-or"),
+                                    *[
+                                        html.Label(
+                                            [
+                                                html.Span(
+                                                    axis,
+                                                    className="toolbar-label",
+                                                ),
+                                                dcc.Input(
+                                                    id=f"lookup-{axis.lower()}",
+                                                    type="number",
+                                                    placeholder=axis,
+                                                    step="any",
+                                                    debounce=False,
+                                                    className="lookup-input lookup-coordinate",
+                                                ),
+                                            ],
+                                            className="lookup-field",
+                                        )
+                                        for axis in "XYZ"
+                                    ],
+                                    html.Button(
+                                        "Generate evidence",
+                                        id="inspect-element",
+                                        type="button",
+                                        className="inspect-button",
+                                    ),
+                                ],
+                                className="lookup-controls",
+                            ),
+                        ],
+                        className="verification-toolbar",
+                    ),
+                    html.Div(
+                        "You can also click a node or strut in the 3D view.",
+                        id="lookup-feedback",
+                        className="lookup-feedback",
+                    ),
+                    dcc.Loading(
+                        type="circle",
+                        color="#55d6be",
+                        children=dcc.Graph(
+                            id="evidence-view",
+                            figure=_evidence_figure(
+                                default_dataset,
+                                {"meta": {"threshold": 0}},
+                                None,
+                            ),
+                            config={
+                                "displaylogo": False,
+                                "responsive": True,
+                                "toImageButtonOptions": {
+                                    "format": "png",
+                                    "filename": "lattice_ct_evidence",
+                                    "scale": 2,
+                                },
+                            },
+                        ),
+                    ),
+                    html.Div(
+                        id="evidence-details",
+                        className="selection-details evidence-details",
+                    ),
+                ],
+                className="model-panel verification-panel",
+            ),
         ],
         className="shell",
     )
+
+    @app.callback(
+        Output("selected-element", "data"),
+        Output("lookup-feedback", "children"),
+        Input("viewer", "clickData"),
+        Input("inspect-element", "n_clicks"),
+        State("lookup-kind", "value"),
+        State("lookup-id", "value"),
+        State("lookup-x", "value"),
+        State("lookup-y", "value"),
+        State("lookup-z", "value"),
+        State("threshold-control", "value"),
+        prevent_initial_call=True,
+    )
+    def select_element(
+        click_data: dict[str, Any] | None,
+        _inspect_clicks: int | None,
+        kind: str,
+        identifier: str | None,
+        x: float | None,
+        y: float | None,
+        z: float | None,
+        threshold_value: float | None,
+    ) -> tuple[dict[str, Any] | None, Any]:
+        try:
+            threshold = None if threshold_value is None else float(threshold_value)
+            analysis = _analysis(
+                default_dataset,
+                float(config["voxel_size_mm"]),
+                threshold,
+            )
+            if ctx.triggered_id == "viewer":
+                selected = _clicked_element(analysis, click_data)
+                if selected is None:
+                    raise ValueError("Click a registered node or strut trace.")
+                distance_text = ""
+            elif identifier is not None and str(identifier).strip():
+                selected = _element_by_id(analysis, kind, identifier)
+                distance_text = ""
+            else:
+                if any(value is None for value in (x, y, z)):
+                    raise ValueError(
+                        "Enter an element ID or all three XYZ voxel coordinates."
+                    )
+                selected, distance = _nearest_element(analysis, kind, [x, y, z])
+                distance_text = f" · {distance:.2f} voxels from entered position"
+            selected_kind, item = selected
+            return (
+                {"kind": selected_kind, "id": item["id"]},
+                html.Span(
+                    [
+                        html.Strong(
+                            f"Selected {selected_kind} ID {item['id']}"
+                        ),
+                        f"{distance_text}. Generating full-resolution raw CT evidence.",
+                    ]
+                ),
+            )
+        except Exception as exc:
+            return None, html.Span(str(exc), className="error-message")
 
     @app.callback(
         Output("viewer", "figure"),
@@ -1031,7 +1988,7 @@ def create_app(default_dataset: str = "missing_struts") -> Dash:
         Input("status-filters", "value"),
         Input("element-filters", "value"),
         Input("show-ct", "value"),
-        Input("viewer", "clickData"),
+        Input("selected-element", "data"),
         Input("threshold-control", "value"),
         Input("x-axis-max", "value"),
         Input("y-axis-max", "value"),
@@ -1041,7 +1998,7 @@ def create_app(default_dataset: str = "missing_struts") -> Dash:
         statuses: list[str],
         elements: list[str],
         show_ct: list[str],
-        click_data: dict[str, Any] | None,
+        selected_reference: dict[str, Any] | None,
         threshold_value: float | None,
         x_axis_max: float | None,
         y_axis_max: float | None,
@@ -1056,7 +2013,7 @@ def create_app(default_dataset: str = "missing_struts") -> Dash:
                 float(config["voxel_size_mm"]),
                 threshold,
             )
-            selected = _clicked_element(analysis, click_data)
+            selected = _selected_element(analysis, selected_reference)
             active_threshold = float(analysis["meta"]["threshold"])
             threshold_source = analysis["meta"]["threshold_source"]
             source_label = (
@@ -1097,6 +2054,34 @@ def create_app(default_dataset: str = "missing_struts") -> Dash:
                 [html.Span(message, className="error-message")],
                 "Threshold unavailable",
             )
+
+    @app.callback(
+        Output("evidence-view", "figure"),
+        Output("evidence-details", "children"),
+        Input("selected-element", "data"),
+        Input("threshold-control", "value"),
+    )
+    def update_evidence(
+        selected_reference: dict[str, Any] | None,
+        threshold_value: float | None,
+    ) -> tuple[go.Figure, list[Any]]:
+        try:
+            threshold = None if threshold_value is None else float(threshold_value)
+            analysis = _analysis(
+                default_dataset,
+                float(config["voxel_size_mm"]),
+                threshold,
+            )
+            selected = _selected_element(analysis, selected_reference)
+            return (
+                _evidence_figure(default_dataset, analysis, selected),
+                _evidence_details(analysis, selected),
+            )
+        except Exception as exc:
+            message = f"Could not generate raw CT evidence: {exc}"
+            figure = _empty_figure(message)
+            figure.update_layout(height=500)
+            return figure, [html.Span(message, className="error-message")]
 
     @app.callback(
         Output("threshold-control", "value"),

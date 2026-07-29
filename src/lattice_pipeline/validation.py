@@ -196,12 +196,14 @@ def mark_unreliable_boundary_faces(
     for item in result["struts"]:
         if int(item["id"]) in unreliable_strut_ids and item["status"] == "missing":
             item["status"] = "uncertain"
-            item["confidence"] = 0.5
+            item["rule_strength"] = 0.5
+            item.pop("confidence", None)
             item["boundary_reason"] = "unreliable_design_face"
     for item in result["nodes"]:
         if int(item["id"]) in unreliable_node_ids and item["status"] == "missing":
             item["status"] = "uncertain"
-            item["confidence"] = 0.5
+            item["rule_strength"] = 0.5
+            item.pop("confidence", None)
             item["boundary_reason"] = "unreliable_design_face"
 
     element_status = {
@@ -219,7 +221,8 @@ def mark_unreliable_boundary_faces(
         defect["type"] = status
         if status == "uncertain":
             defect["severity"] = "low"
-            defect["confidence"] = 0.5
+            defect["rule_strength"] = 0.5
+            defect.pop("confidence", None)
             defect.setdefault("evidence", {})[
                 "boundary_reason"
             ] = "unreliable_design_face"

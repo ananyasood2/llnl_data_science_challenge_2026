@@ -1,201 +1,611 @@
 {
-  "audit_version": 1,
+  "audit_version": 2,
   "audit_phase": 1,
-  "audit_date": "2026-07-28",
   "scientific_behavior_changed": false,
-  "repository_inventory": {
-    "three_d_viewer": "app/app.py",
-    "lattice_structure_page": null,
-    "defect_inspection_page": null,
-    "exploratory_notebook": null,
-    "ct_loading": "src/lattice_pipeline/io.py",
-    "segmentation": "src/lattice_pipeline/segment.py",
-    "skeletonization": "src/lattice_pipeline/skeleton.py",
-    "json_loading": "src/lattice_pipeline/io.py",
-    "alignment": "src/lattice_pipeline/align.py",
-    "defect_detection": "src/lattice_pipeline/defects.py",
-    "frontend_api_types": null,
-    "fastapi_analysis_endpoints": [],
-    "networkx_used_by_active_source": false
+  "dataset_key": "missing_struts",
+  "pairing": {
+    "tiff": "data/missing_struts/tif_stacks/210127_Brian_Tran_strut_lattices_0point5dash1 1 Slices.tif",
+    "registered_json": "data/missing_struts/registered_jsons/210127_Brian_Tran_strut_lattices_0point5dash1 1 Slices.json",
+    "basename_match": true,
+    "status": "confirmed"
   },
-  "canonical_state_observed": {
-    "raw_array_axis_order": "ZYX",
-    "public_voxel_coordinate_order": "XYZ",
-    "raw_volume_shape_zyx": [
+  "coordinate_system": {
+    "tiff_shape_zyx": [
       761,
       815,
       837
     ],
-    "raw_dtype": "uint16",
-    "analysis_stride_zyx": [
-      2,
-      2,
-      2
+    "tiff_axes": "ZYX",
+    "tiff_dtype": "uint16",
+    "numpy_index_order": "zyx",
+    "json_position_order": "xyz",
+    "json_units_declared": null,
+    "physical_spacing_from_tiff": null,
+    "configured_spacing_um_xyz": [
+      57.738,
+      57.738,
+      57.738
     ],
+    "configured_spacing_status": "unverified_design_span_estimate",
+    "scientific_crop": null,
+    "crop_offset_zyx": [
+      0,
+      0,
+      0
+    ],
+    "coordinate_transform": {
+      "transform_id": "missing_struts:registered-json-to-full-ct:v1",
+      "axis_permutation": [
+        0,
+        1,
+        2
+      ],
+      "axis_directions": [
+        1,
+        1,
+        1
+      ],
+      "json_scale_to_physical_xyz": [
+        57.738,
+        57.738,
+        57.738
+      ],
+      "translation_physical_xyz": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "voxel_spacing_xyz": [
+        57.738,
+        57.738,
+        57.738
+      ],
+      "voxel_origin_physical_xyz": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "crop_offset_zyx": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "physical_units": "um",
+      "registration_status": "likely_valid",
+      "array_axis_order": "zyx",
+      "graph_axis_order": "xyz"
+    }
+  },
+  "bounding_boxes": {
+    "ct_index_min_xyz": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "ct_index_max_xyz": [
+      836.0,
+      814.0,
+      760.0
+    ],
+    "json_min_xyz": [
+      58.76061093762958,
+      48.56857306538771,
+      24.495330850610653
+    ],
+    "json_max_xyz": [
+      773.744679080309,
+      764.9389182508804,
+      737.8463408544252
+    ],
+    "json_fits_ct_volume": true,
+    "segmented_foreground_xyz": {
+      "min_xyz": [
+        18.0,
+        24.0,
+        0.0
+      ],
+      "max_xyz": [
+        782.0,
+        766.0,
+        760.0
+      ]
+    }
+  },
+  "segmentation": {
+    "threshold": 40127.0,
+    "threshold_source": "sampled_otsu",
+    "analysis_stride": 2,
     "analysis_shape_zyx": [
       381,
       408,
       419
     ],
-    "scientific_crop": null,
-    "display_crop": "segmentation_foreground_bounding_box",
-    "display_surface_step": "dynamic_approximately_9_to_10",
-    "physical_spacing_um_xyz": null,
-    "configured_estimated_spacing_um_xyz": [
-      57.738,
-      57.738,
-      57.738
+    "foreground_fraction": 0.11292786334461245
+  },
+  "nde_features": {
+    "raw_intensity_sample_stride_zyx": [
+      4,
+      4,
+      4
     ],
-    "physical_spacing_status": "unverified_estimate"
-  },
-  "coordinate_formulas": {
-    "analysis_from_original": "analysis_zyx = original_zyx / 2 for sampled voxels",
-    "original_from_analysis": "original_xyz = analysis_xyz * 2",
-    "surface_to_original": "original_zyx = (surface_local_zyx * surface_step + bbox_min_zyx) * analysis_stride",
-    "xy_slice": "volume[z, :, :]",
-    "xz_slice": "volume[:, y, :]",
-    "yz_slice": "volume[:, :, x]"
-  },
-  "current_cache": {
-    "threshold": 0.005,
-    "sampled_otsu_threshold": 40127.0,
-    "foreground_fraction": 1.0,
-    "registration_refinement_applied": false,
-    "registration_refinement_reason": "too_few_skeleton_voxels",
-    "detected_struts_by_status": {
-      "healthy": 18468
-    },
-    "detected_nodes_by_status": {
-      "healthy": 10206
-    },
-    "detected_defect_count": 0,
-    "expected_intentional_missing_struts": 93,
-    "ground_truth_false_negatives": 93,
-    "status": "invalid_and_contradicted"
+    "raw_intensity_sample_mean": 34332.68583087686,
+    "raw_intensity_sample_min": 733.0,
+    "raw_intensity_sample_max": 63089.0,
+    "segmented_foreground_voxels_analysis_resolution": 7355298,
+    "skeleton_voxels_analysis_resolution": 394888,
+    "skeleton_connected_components": 145,
+    "skeleton_branch_point_signal_voxels": 72774,
+    "shape_compatibility": "passed"
   },
   "registration": {
-    "ct_json_basename_match": true,
-    "json_declares_coordinate_system": false,
-    "json_declares_units": false,
-    "json_declares_registration_transform": false,
-    "graph_bounds_fit_volume": true,
-    "configuration_forces_registered_identity": true,
-    "segmentation_dependent_refinement_available": true,
-    "independently_verified": false,
-    "status": "supported_registration_not_independently_verified",
-    "warnings": [
-      "Registration is trusted from configuration and filename placement.",
-      "The JSON contains no registration or unit metadata.",
-      "Refinement depends on the selected segmentation threshold.",
-      "The configured CAD cube symmetry has no provenance metadata."
-    ]
-  },
-  "crop_and_exclusion": {
-    "configured_crop": null,
-    "configured_excluded_cut_region": null,
-    "observed_valid_threshold_foreground_bounds_xyz": {
-      "min": [
-        18,
-        24,
-        0
+    "status": "likely_valid",
+    "automatic_missing_validation_enabled": true,
+    "reasons": [
+      "pairing, axis convention, bounds, and measured path support pass",
+      "the JSON does not independently declare units or transform provenance"
+    ],
+    "path_sample_count": 166212,
+    "centerline_foreground_fraction": 0.957650470483479,
+    "material_support_within_radius_fraction": 0.9745265083146825,
+    "material_support_radius_original_vox": 4,
+    "median_expected_path_to_skeleton_original_vox": 1.3649571038859722,
+    "p90_expected_path_to_skeleton_original_vox": 2.4614317260767384,
+    "refinement_median_distance_before_original_vox": 3.291394219140228,
+    "refinement_median_distance_after_original_vox": 1.339524249949589,
+    "refinement_p90_distance_before_original_vox": 6.728933811609567,
+    "refinement_p90_distance_after_original_vox": 2.3977086510120276,
+    "active_detector_residual_affine_original_voxel_row_vector": [
+      [
+        0.9885172695589971,
+        -0.0009387605695787767,
+        0.0027750453827484842
       ],
-      "max": [
-        782,
-        766,
-        760
+      [
+        0.0011966360888635197,
+        0.9963023578821364,
+        0.002429494586068317
+      ],
+      [
+        -0.0015039540595299585,
+        -0.0015712644239635244,
+        0.9927942029097316
+      ],
+      [
+        2.730599237635173,
+        1.436302659992919,
+        2.654343191139089
+      ]
+    ],
+    "residual_affine_note": "The working detector applies this segmentation-dependent refinement after the registered identity mapping. It is reported explicitly but is not yet routed through the new canonical coordinate object.",
+    "quality_rule": {
+      "failed": "pairing/axes/bounds failure, foreground fraction outside (0.001, 0.50), or path material support below 0.50",
+      "warning": "path material support below 0.80, median skeleton distance above 3 voxels, or p90 above 8 voxels",
+      "verified": "all measured gates pass and JSON declares coordinates, units, and transform provenance",
+      "likely_valid": "all measured gates pass but transform provenance is incomplete"
+    }
+  },
+  "boundary": {
+    "configured_excluded_region": null,
+    "unreliable_boundary_faces": [
+      {
+        "axis": "Y",
+        "side": "high",
+        "strut_count": 324,
+        "missing_evidence_fraction": 1.0,
+        "reason": "scan_boundary_or_registration_mismatch"
+      }
+    ],
+    "status": "registration_warning",
+    "reason": "high-Y cut/absent surface is detected heuristically but is not encoded as an explicit exclusion mask"
+  },
+  "detector_baseline": {
+    "struts_by_status": {
+      "healthy": 16170,
+      "thick": 1853,
+      "missing": 93,
+      "uncertain": 330,
+      "broken": 22
+    },
+    "nodes_by_status": {
+      "healthy": 9979,
+      "uncertain": 217,
+      "missing": 8,
+      "broken": 2
+    },
+    "candidate_defect_count": 2526,
+    "cad_id_metrics": {
+      "method": "complete_vs_defect_cad_midpoint_surface_distance",
+      "struts": {
+        "expected": 93,
+        "predicted": 93,
+        "true_positive": 90,
+        "false_positive": 3,
+        "false_negative": 3,
+        "precision": 0.967741935483871,
+        "recall": 0.967741935483871,
+        "f1": 0.967741935483871,
+        "true_positive_ids": [
+          10,
+          214,
+          946,
+          1310,
+          1666,
+          1728,
+          2251,
+          2289,
+          2303,
+          2359,
+          3256,
+          4101,
+          4495,
+          4661,
+          4747,
+          4752,
+          4931,
+          5066,
+          5223,
+          5621,
+          5823,
+          6234,
+          6670,
+          7225,
+          7420,
+          7706,
+          8114,
+          8442,
+          8764,
+          8823,
+          9273,
+          9303,
+          9329,
+          9597,
+          9778,
+          10003,
+          10027,
+          10030,
+          10298,
+          10948,
+          11650,
+          11766,
+          11791,
+          11793,
+          11851,
+          11875,
+          11878,
+          11963,
+          11984,
+          12009,
+          12017,
+          12036,
+          12040,
+          12044,
+          12281,
+          12286,
+          12488,
+          12619,
+          12639,
+          12709,
+          13061,
+          13232,
+          13345,
+          13452,
+          13638,
+          13663,
+          13665,
+          13857,
+          13865,
+          13884,
+          13888,
+          13892,
+          14119,
+          14210,
+          14296,
+          14297,
+          14576,
+          14625,
+          14637,
+          15386,
+          15629,
+          15712,
+          15939,
+          16613,
+          16820,
+          17007,
+          17562,
+          17607,
+          17855,
+          18200
+        ],
+        "false_positive_ids": [
+          3779,
+          8164,
+          18274
+        ],
+        "false_negative_ids": [
+          417,
+          9976,
+          16702
+        ]
+      },
+      "nodes": {
+        "expected": 21,
+        "predicted": 8,
+        "true_positive": 8,
+        "false_positive": 0,
+        "false_negative": 13,
+        "precision": 1.0,
+        "recall": 0.38095238095238093,
+        "f1": 0.5517241379310345,
+        "true_positive_ids": [
+          5647,
+          6653,
+          6697,
+          6763,
+          6776,
+          7703,
+          7813,
+          7826
+        ],
+        "false_positive_ids": [],
+        "false_negative_ids": [
+          956,
+          4566,
+          5520,
+          5634,
+          6570,
+          6638,
+          6684,
+          6740,
+          7104,
+          7688,
+          7996,
+          8670,
+          8980
+        ]
+      },
+      "expected_strut_ids": [
+        10,
+        214,
+        417,
+        946,
+        1310,
+        1666,
+        1728,
+        2251,
+        2289,
+        2303,
+        2359,
+        3256,
+        4101,
+        4495,
+        4661,
+        4747,
+        4752,
+        4931,
+        5066,
+        5223,
+        5621,
+        5823,
+        6234,
+        6670,
+        7225,
+        7420,
+        7706,
+        8114,
+        8442,
+        8764,
+        8823,
+        9273,
+        9303,
+        9329,
+        9597,
+        9778,
+        9976,
+        10003,
+        10027,
+        10030,
+        10298,
+        10948,
+        11650,
+        11766,
+        11791,
+        11793,
+        11851,
+        11875,
+        11878,
+        11963,
+        11984,
+        12009,
+        12017,
+        12036,
+        12040,
+        12044,
+        12281,
+        12286,
+        12488,
+        12619,
+        12639,
+        12709,
+        13061,
+        13232,
+        13345,
+        13452,
+        13638,
+        13663,
+        13665,
+        13857,
+        13865,
+        13884,
+        13888,
+        13892,
+        14119,
+        14210,
+        14296,
+        14297,
+        14576,
+        14625,
+        14637,
+        15386,
+        15629,
+        15712,
+        15939,
+        16613,
+        16702,
+        16820,
+        17007,
+        17562,
+        17607,
+        17855,
+        18200
+      ],
+      "expected_missing_node_ids": [
+        956,
+        4566,
+        5520,
+        5634,
+        5647,
+        6570,
+        6638,
+        6653,
+        6684,
+        6697,
+        6740,
+        6763,
+        6776,
+        7104,
+        7688,
+        7703,
+        7813,
+        7826,
+        7996,
+        8670,
+        8980
       ]
     },
-    "manual_axis_limits_affect_detection": false,
-    "boundary_distance_available": false,
-    "inside_analysis_region_available": false,
-    "warning": "The high-Y cut/absent region is not represented by explicit analysis metadata."
+    "interpretation": "candidate detector output only; no selected-item validation status is produced in Phase 1"
   },
-  "candidates_checked": {
-    "selected_candidates_with_full_evidence": 0,
-    "ground_truth_expected_struts_compared_to_active_cache": 93,
-    "active_cache_supported_candidates": 0,
-    "active_cache_contradicted_ground_truth_locations": 93
+  "visual_check": {
+    "label": "center",
+    "node_id": 5107,
+    "node_voxel_xyz": [
+      453.15156270856625,
+      405.4591622231078,
+      383.36344584381936
+    ],
+    "incident_strut_ids": [
+      9056,
+      9057,
+      9058,
+      9060
+    ],
+    "target_fraction_xyz": [
+      0.5,
+      0.5,
+      0.5
+    ],
+    "image": "outputs/verification/registration_landmark_overlay.png",
+    "image_origin": "lower",
+    "landmarks": [
+      {
+        "label": "center",
+        "node_id": 5107,
+        "node_voxel_xyz": [
+          453.15156270856625,
+          405.4591622231078,
+          383.36344584381936
+        ],
+        "incident_strut_ids": [
+          9056,
+          9057,
+          9058,
+          9060
+        ],
+        "target_fraction_xyz": [
+          0.5,
+          0.5,
+          0.5
+        ],
+        "image": "outputs/verification/registration_landmark_overlay.png",
+        "image_origin": "lower"
+      },
+      {
+        "label": "lower_interior",
+        "node_id": 2545,
+        "node_voxel_xyz": [
+          218.32442389045963,
+          249.32578764245986,
+          225.74472044310883
+        ],
+        "incident_strut_ids": [
+          4512,
+          4513,
+          4514,
+          4516
+        ],
+        "target_fraction_xyz": [
+          0.3,
+          0.3,
+          0.3
+        ],
+        "image": "outputs/verification/registration_landmark_lower_interior.png",
+        "image_origin": "lower"
+      },
+      {
+        "label": "upper_interior",
+        "node_id": 7531,
+        "node_voxel_xyz": [
+          570.6290178112446,
+          522.9619430688214,
+          540.5693933607575
+        ],
+        "incident_strut_ids": [
+          13354,
+          13357,
+          13362,
+          13363
+        ],
+        "target_fraction_xyz": [
+          0.7,
+          0.65,
+          0.7
+        ],
+        "image": "outputs/verification/registration_landmark_upper_interior.png",
+        "image_origin": "lower"
+      }
+    ],
+    "context_3d_views": [
+      "outputs/verification/registration_3d_elev30_azim45.png",
+      "outputs/verification/registration_3d_elev60_azim45.png"
+    ]
   },
-  "mappings_passed": [
-    "TIFF metadata confirms ZYX array order.",
-    "Classifier mask sampling explicitly converts XYZ points to ZYX array indices.",
-    "Skeleton argwhere coordinates are explicitly reversed from ZYX to XYZ.",
-    "Serialized graph and defect coordinates restore analysis stride.",
-    "Marching-cubes display coordinates restore foreground-bbox offset, surface step, and analysis stride."
-  ],
-  "mappings_failed": [
-    "No selected 3D element is mapped to raw XY, XZ, and YZ evidence views.",
-    "No canonical typed coordinate transform is serialized.",
-    "No scientific crop or excluded-cut transform exists.",
-    "No image-origin or synchronized-crosshair behavior is tested.",
-    "No selected candidate is traced through raw CT, mask, skeleton, graph, boundary, and threshold evidence.",
-    "Final defect classification uses downsampled rather than full-resolution data."
-  ],
-  "classifications_supported": [],
-  "classifications_contradicted": [
-    {
-      "class": "healthy_strut",
-      "count": 93,
-      "reason": "The active degenerate threshold classifies all 93 intentional CAD removals as healthy."
-    }
-  ],
-  "classifications_questionable": [
-    {
-      "class": "broken",
-      "reason": "No raw-CT consistency, threshold persistence, or explicit cut-boundary exclusion."
-    },
-    {
-      "class": "disconnected",
-      "reason": "Skeleton-component rule is evaluated at stride 2 without explicit crop metadata."
-    },
-    {
-      "class": "thin_or_thick",
-      "reason": "TIFF spacing and anisotropy are unavailable; configured physical spacing is estimated."
-    },
-    {
-      "class": "boundary_uncertain",
-      "reason": "Heuristic face interpretation exists, but no explicit excluded-region geometry or distance."
-    }
-  ],
-  "classifications_changed_in_phase": 0,
-  "excluded_boundary_candidates": 0,
-  "selected_defect_evidence_api_available": false,
-  "orthogonal_evidence_views_available": false,
-  "local_volume_evidence_available": false,
-  "threshold_sensitivity_available": false,
-  "validation_bundle_export_available": false,
-  "test_results": {
-    "scientific_dashboard_pytest": {
-      "passed": 23,
-      "failed": 0
-    },
-    "fastapi_pytest": {
-      "passed": 2,
-      "failed": 0
-    },
-    "frontend_lint": "passed",
-    "frontend_typecheck": "passed",
-    "frontend_tests": {
-      "passed": 0,
-      "failed": 0,
-      "warning": "The frontend test command discovered zero tests."
-    },
-    "frontend_production_build": {
-      "status": "passed",
-      "note": "Required execution outside the restricted sandbox because Turbopack binds a local helper port."
-    }
+  "selection_flow": {
+    "source": "Plotly trace customdata",
+    "payload": [
+      "element_kind",
+      "graph_element_id",
+      "detector_status"
+    ],
+    "resolver": "app.app._clicked_element",
+    "persistent_state": false,
+    "url_state": false,
+    "validation_api_request": false,
+    "camera_focus": false
   },
-  "phase_1_files_created": [
-    "docs/DEFECT_3D_TO_2D_VERIFICATION.md",
-    "outputs/verification/verification_summary.json"
+  "phase_1_verified": [
+    "TIFF/JSON file pairing",
+    "TIFF ZYX array convention",
+    "JSON XYZ position convention used by active code",
+    "full-volume graph bounds",
+    "current non-degenerate Otsu segmentation",
+    "measured expected-path proximity to segmentation and skeleton",
+    "3D click payload resolves actual graph strut/node IDs"
   ],
-  "remaining_uncertainties": [
-    "Physical voxel spacing and anisotropy.",
-    "Independent registration provenance and accuracy.",
-    "Configured CAD symmetry provenance.",
-    "Exact high-Y cut/exclusion bounds and safety buffer.",
-    "Candidate-level threshold persistence.",
-    "Full-resolution evidence for every displayed defect.",
-    "Ground-truth semantics for missing nodes."
+  "remaining_assumptions": [
+    "physical spacing is inferred from nominal design span",
+    "registered JSON lacks independent transform provenance",
+    "registration refinement depends on thresholded skeleton",
+    "high-Y excluded cut region has no explicit mask or bound",
+    "detector still measures at analysis stride 2",
+    "no candidate-level raw CT validation exists yet"
   ]
 }

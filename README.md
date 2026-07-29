@@ -39,9 +39,15 @@ python app/app.py
 ```
 
 Open <http://127.0.0.1:8050>. Drag to orbit, scroll to zoom, and click a strut
-or node for its classification details. The first missing-strut run builds the processed
-mask, skeleton, distance map, and `analysis.json`; later runs load those files
-from `data/missing_struts/processed/`.
+or node for its classification details. The **Raw CT verification** panel also
+accepts an exact strut/node ID or an XYZ voxel position. A position resolves to
+the nearest requested element and generates full-resolution XY, XZ, and YZ raw
+CT views with the registered expected geometry and active threshold contour
+overlaid. Use Plotly's camera button to download the evidence as a PNG.
+
+The first missing-strut run builds the processed mask, skeleton, distance map,
+and `analysis.json`; later runs load those files from
+`data/missing_struts/processed/`.
 
 Useful alternatives:
 

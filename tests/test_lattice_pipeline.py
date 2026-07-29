@@ -60,7 +60,9 @@ def test_absent_design_strut_is_missing_and_schema_is_complete() -> None:
     )
     assert result["struts"][0]["status"] == "missing"
     assert result["defects"][0]["affected_element"] == {"kind": "strut", "id": 7}
-    assert 0 <= result["defects"][0]["confidence"] <= 1
+    assert 0 <= result["defects"][0]["rule_strength"] <= 1
+    assert "confidence" not in result["defects"][0]
+    assert result["nodes"][0]["rule_strength"] is None
     assert result["summary"]["connectivity"] == 26
 
 
@@ -128,7 +130,7 @@ def test_scan_wide_missing_face_is_downgraded_to_uncertain() -> None:
             {
                 "type": "missing",
                 "severity": "high",
-                "confidence": 0.98,
+                "rule_strength": 0.98,
                 "affected_element": {"kind": "strut", "id": 1},
             }
         ],
@@ -143,8 +145,10 @@ def test_scan_wide_missing_face_is_downgraded_to_uncertain() -> None:
 
     assert {f"{face['axis']}-{face['side']}" for face in faces} == {"Y-high"}
     assert result["struts"][1]["status"] == "uncertain"
+    assert result["struts"][1]["rule_strength"] == 0.5
     assert result["nodes"][2]["status"] == "uncertain"
     assert result["defects"][0]["type"] == "uncertain"
+    assert result["defects"][0]["rule_strength"] == 0.5
 
 
 def test_id_level_validation_reports_false_positives_and_negatives() -> None:
