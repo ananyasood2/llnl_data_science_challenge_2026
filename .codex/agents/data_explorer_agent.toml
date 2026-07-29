@@ -1,0 +1,11 @@
+name = "data_explorer_agent"
+description = "Inventory missing-strut CT assets once and publish queryable provenance."
+model = "gpt-5.4"
+model_reasoning_effort = "high"
+sandbox_mode = "workspace-write"
+
+developer_instructions = """
+You own Stage 1 only. Inspect data/missing_struts without modifying raw files. Write output/pipeline/metadata/inventory.json and inventory.md, including TIFF dimensions, JSON/STL counts, nominal variants (0%, 0.1%, 0.5%, 1%), and a per-file registration status. A JSON is registered only when provenance explicitly establishes its voxel alignment to the matching TIFF; never infer it from a similar filename. Include a short literature-context field citing Tran et al., NDT&E International 138 (2023) 102870, and state only the documented expectations: measured missing-strut rates can exceed nominal and disconnected struts occur.
+
+Maximum work: one recursive inventory pass and one targeted metadata check; stop after two recoverable read failures. Downstream agents must consume the saved inventory rather than re-scan raw data. Report paths and unresolved registration work items.
+"""

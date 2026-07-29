@@ -1,0 +1,18 @@
+{
+  "evaluation_id": "registered_0point5dash1_robust_v2",
+  "artifact_under_test": "output/part2/registered_0point5dash1_robust_v2/inspection_summary.json",
+  "registration_status": "registered TIFF/JSON pair; STL excluded",
+  "counts": {
+    "total_expected_struts": 18468,
+    "missing_candidate": 1049,
+    "disconnected_candidate": 5262,
+    "uncertain_candidate": 1083,
+    "clear": 11074,
+    "strong_flagged_candidate_total": 6311,
+    "strong_flagged_candidate_percentage": 34.17
+  },
+  "workflow_evidence_maturity_average": 3.67,
+  "accuracy_score": null,
+  "accuracy_score_reason": "No registered per-strut ground truth or local 0% baseline TIFF is available; strong candidate counts are not confirmed defect counts.",
+  "next_validation_step": "Use a registered 0% TIFF/JSON baseline to tune false-positive rates, then join adjudicated truth for class-specific precision, recall, F1, and confusion matrices."
+}

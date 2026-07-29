@@ -1,0 +1,19 @@
+{
+  "tiff": "data\\missing_struts\\tif_stacks\\210127_Brian_Tran_strut_lattices_0point5dash1 1 Slices.tif",
+  "registered_graph": "data\\missing_struts\\registered_jsons\\210127_Brian_Tran_strut_lattices_0point5dash1 1 Slices.json",
+  "volume_shape_zyx": [
+    761,
+    815,
+    837
+  ],
+  "downsampled_shape_zyx": [
+    191,
+    204,
+    210
+  ],
+  "dtype": "uint16",
+  "junctions": 10206,
+  "struts": 18468,
+  "stl_used": false,
+  "registration_status": "Explicitly registered by supplied registered_jsons path and matching TIFF stem."
+}

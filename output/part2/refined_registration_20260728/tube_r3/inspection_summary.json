@@ -1,0 +1,36 @@
+{
+  "pipeline": "registered-centreline-screen-v1",
+  "input_tiff": "data\\missing_struts\\tif_stacks\\210127_Brian_Tran_strut_lattices_0point5dash1 1 Slices.tif",
+  "registered_graph": "data\\missing_struts\\registered_jsons\\210127_Brian_Tran_strut_lattices_0point5dash1 1 Slices.json",
+  "volume_shape_zyx": [
+    761,
+    815,
+    837
+  ],
+  "samples_per_strut": 31,
+  "representative_otsu_thresholds": [
+    40113.0,
+    38172.0,
+    38207.0,
+    40499.0,
+    38197.0,
+    37768.0,
+    37691.0
+  ],
+  "selected_threshold": 42017,
+  "threshold_rationale": "Maximized centreline-fraction separation among candidates retaining median fraction >= 0.60.",
+  "counts": {
+    "missing_candidate": 1159,
+    "disconnected_candidate": 6505,
+    "uncertain_candidate": 1384,
+    "clear": 9420
+  },
+  "tube_radius_voxels": 3,
+  "classification": {
+    "missing_fraction_lt": 0.04,
+    "disconnected_fraction_lt": 0.35,
+    "disconnected_gap_gte": 8,
+    "uncertain_fraction_lt": 0.6
+  },
+  "limitation": "Candidates are not confirmed defects; inspect CT neighborhoods before claiming missing or disconnected struts. 0% baseline calibration is unavailable because its TIFF is not present locally."
+}

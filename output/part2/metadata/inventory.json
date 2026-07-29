@@ -1,0 +1,127 @@
+{
+  "schema_version": "part2-missing-struts-inventory-v1",
+  "generated_at_utc": "2026-07-28T17:15:17.778506+00:00",
+  "dataset_root": "data/missing_struts",
+  "file_counts": {
+    ".txt": 1,
+    ".json": 2,
+    ".stl": 4,
+    ".tif": 1
+  },
+  "documentation_source": "data/missing_struts/file_names.txt",
+  "documentation_excerpt": "The tif stack names encode CT scan datasets for additively manufactured octet-truss lattice specimens. The trailing part identifies the nominal missing-strut percentage and specimen replicate.\n\nThe folders ending in _01, _02, and _03 correspond to the three 0% missing-strut specimens. The folders containing 0point5dash1, 0point5dash2, and 0point5dash3 correspond to the three 0.5% missing-strut specimens. The folders ending in 1_1, 1_2, and 1_3 correspond to the three 1% missing-strut specimens. \n\nFor each missing-strut percentage, the three numbered tif stacks are interpreted as scans of three separate physical specimens printed from the same nominal CAD/STL design, placed at different locations on the same build plate. The three specimens were built for each design and does not have any intentional variation in printing parameters among the three replicates.\n\nThe octet_truss_9x9x9.json file contains the nominal node and strut definition of the lattice with all struts present (0% removed). \n\nNote that the stl files, json file, and tif files live in different coordinate systems and therefore need to be aligned/registered if you want to analyze them in conjunction (e.g. as-design vs. as-built analysis). \n\n0% missing (0.stl)\n210125_Brian_Tran_strut_lattice_01 1 Slices\n210125_Brian_Tran_strut_lattice_02 1 Slices\n210125_Brian_Tran_strut_lattice_03 1 Slices\n\n0.5% missing (0.5.stl)\n210127_Brian_Tran_strut_lattices_0point5dash1 1 Slices\n210127_Brian_Tran_strut_lattices_0point5dash2 1 Slices\n210127_Brian_Tran_strut_lattices_0point5dash3 1 Slices\n\n1% missing (1.stl)\n210127_Brian_Tran_strut_lattices_1_1 1 Slices\n210127_Brian_Tran_strut_lattices_1_2 1 Slices\n210127_Brian_Tran_strut_lattices_1_3 1 Slices",
+  "variants": {
+    "0%": {
+      "tiff_stacks": [],
+      "stl_designs": [
+        "data/missing_struts/stls/0.stl"
+      ]
+    },
+    "0.1%": {
+      "tiff_stacks": [],
+      "stl_designs": [
+        "data/missing_struts/stls/0.1.stl"
+      ]
+    },
+    "0.5%": {
+      "tiff_stacks": [
+        "data/missing_struts/tif_stacks/210127_Brian_Tran_strut_lattices_0point5dash1 1 Slices.tif"
+      ],
+      "stl_designs": [
+        "data/missing_struts/stls/0.5.stl"
+      ]
+    },
+    "1%": {
+      "tiff_stacks": [],
+      "stl_designs": [
+        "data/missing_struts/stls/1.stl"
+      ]
+    }
+  },
+  "tiff_stacks": [
+    {
+      "path": "data/missing_struts/tif_stacks/210127_Brian_Tran_strut_lattices_0point5dash1 1 Slices.tif",
+      "bytes": 1038433319,
+      "page_count": 761,
+      "page_shape_yx": [
+        815,
+        837
+      ],
+      "volume_shape_zyx": [
+        761,
+        815,
+        837
+      ],
+      "dtype": "uint16",
+      "nominal_missing_strut_percentage": "0.5%"
+    }
+  ],
+  "graphs": [
+    {
+      "path": "data/missing_struts/octet_truss_9x9x9.json",
+      "bytes": 3938777,
+      "junction_count": 10206,
+      "strut_count": 18468,
+      "registered_to_tiff": false,
+      "coordinate_system": "design coordinates",
+      "registration_note": "Dataset documentation states JSON/STL/TIFF files are in different coordinate systems; registration is required."
+    },
+    {
+      "path": "data/missing_struts/registered_jsons/210127_Brian_Tran_strut_lattices_0point5dash1 1 Slices.json",
+      "bytes": 4958672,
+      "junction_count": 10206,
+      "strut_count": 18468,
+      "registered_to_tiff": true,
+      "coordinate_system": "CT voxel coordinates",
+      "registration_note": "Filename matches the CT stack and directory explicitly denotes registration."
+    }
+  ],
+  "stl_designs": [
+    {
+      "path": "data/missing_struts/stls/0.1.stl",
+      "bytes": 175572984,
+      "nominal_missing_strut_percentage": "0.1%",
+      "registered_to_tiff": false,
+      "registration_note": "Design STL; dataset documentation requires registration before CT comparison."
+    },
+    {
+      "path": "data/missing_struts/stls/0.5.stl",
+      "bytes": 174932884,
+      "nominal_missing_strut_percentage": "0.5%",
+      "registered_to_tiff": false,
+      "registration_note": "Design STL; dataset documentation requires registration before CT comparison."
+    },
+    {
+      "path": "data/missing_struts/stls/0.stl",
+      "bytes": 175732184,
+      "nominal_missing_strut_percentage": "0%",
+      "registered_to_tiff": false,
+      "registration_note": "Design STL; dataset documentation requires registration before CT comparison."
+    },
+    {
+      "path": "data/missing_struts/stls/1.stl",
+      "bytes": 174118484,
+      "nominal_missing_strut_percentage": "1%",
+      "registered_to_tiff": false,
+      "registration_note": "Design STL; dataset documentation requires registration before CT comparison."
+    }
+  ],
+  "registered_pairs": [
+    {
+      "tiff": "data/missing_struts/tif_stacks/210127_Brian_Tran_strut_lattices_0point5dash1 1 Slices.tif",
+      "graph": "data/missing_struts/registered_jsons/210127_Brian_Tran_strut_lattices_0point5dash1 1 Slices.json",
+      "basis": "Exact filename stem plus registered_jsons directory."
+    }
+  ],
+  "registration_policy": "Only registered_pairs may be compared directly in CT voxel coordinates. All other CT/design comparisons require an explicit registration stage.",
+  "literature_grounding": {
+    "citation": "Tran et al. (2023), Resonant ultrasound spectroscopy measurement and modeling of additively manufactured octet truss lattice cubes, NDT & E International 138, 102870.",
+    "doi_url": "https://doi.org/10.1016/j.ndteint.2023.102870",
+    "validation_note": "Treat missing and disconnected struts as mutually exclusive classes. The paper reports measured missing-strut percentages above nominal and disconnected-strut rates near 5% (with specimen-level variation); use nominal percentages as design labels rather than a strict measured target."
+  },
+  "caveats": [
+    "The repository currently contains one TIFF stack, although file_names.txt documents additional scan names.",
+    "The 0.1% STL exists but has no matching scan listed in file_names.txt.",
+    "File names encode nominal design intent, not CT-measured defect counts."
+  ]
+}

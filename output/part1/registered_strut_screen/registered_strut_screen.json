@@ -1,0 +1,15 @@
+{
+  "threshold": 40499.0,
+  "shape": [
+    761,
+    815,
+    837
+  ],
+  "samples_per_strut": 25,
+  "counts": {
+    "missing": 2518,
+    "broken": 7496,
+    "clear": 8454
+  },
+  "note": "Candidates require visual validation; no disconnected-component result is inferred by this centerline screen."
+}

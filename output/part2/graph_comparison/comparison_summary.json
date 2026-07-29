@@ -1,0 +1,46 @@
+{
+  "schema_version": "registered-graph-comparison-v1",
+  "nominal_graph": "data\\missing_struts\\octet_truss_9x9x9.json",
+  "registered_graph": "data\\missing_struts\\registered_jsons\\210127_Brian_Tran_strut_lattices_0point5dash1 1 Slices.json",
+  "candidate_measurements": "output\\part2\\registered_0point5dash1_robust_v2\\strut_candidates.csv",
+  "counts": {
+    "junctions": 10206,
+    "struts": 18468,
+    "candidate_rows": 18468
+  },
+  "id_comparison": {
+    "junction_id_sets_match": true,
+    "strut_id_sets_match": true,
+    "endpoint_mismatch_count": 0,
+    "thickness_mismatch_count": 0
+  },
+  "position_comparison": {
+    "registered_coordinate_system": "CT voxel",
+    "voxel_size_mm": 0.04903225806451613,
+    "least_squares_design_to_voxel_affine_4x3": [
+      [
+        39.48828542379568,
+        -0.2007955789636571,
+        0.03272233465246342
+      ],
+      [
+        0.20088540365624433,
+        39.48814741184212,
+        -0.10924450597769515
+      ],
+      [
+        -0.032166291585798534,
+        0.1094095194990934,
+        39.48864482624852
+      ],
+      [
+        59.339604186174085,
+        52.18289348673606,
+        26.46173195820821
+      ]
+    ],
+    "registration_residual_voxel_rms": 6.368549229340193e-13,
+    "registration_residual_voxel_max": 2.5437429940211587e-12
+  },
+  "thickness_note": "Graph thickness is nominal design metadata (0.1 graph units). Per-strut measured CT diameter is not available in the current screening output."
+}

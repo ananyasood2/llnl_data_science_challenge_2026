@@ -1,0 +1,39 @@
+{
+  "evaluation_id": "registered_0point5dash1_candidate_screen_v1",
+  "evaluated_at": "2026-07-28",
+  "artifact_under_test": "output/part2/registered_0point5dash1/inspection_summary.json",
+  "dataset": {
+    "input_tiff": "data/missing_struts/tif_stacks/210127_Brian_Tran_strut_lattices_0point5dash1 1 Slices.tif",
+    "registered_graph": "data/missing_struts/registered_jsons/210127_Brian_Tran_strut_lattices_0point5dash1 1 Slices.json",
+    "volume_shape_zyx": [761, 815, 837],
+    "nominal_missing_percentage": 0.5,
+    "registration_status": "registered TIFF/JSON pair; STL excluded as unregistered"
+  },
+  "observed_screening_counts": {
+    "total_expected_struts": 18468,
+    "missing_candidate": 2110,
+    "disconnected_candidate": 6025,
+    "clear": 10333,
+    "flagged_candidate_total": 8135,
+    "flagged_candidate_percentage": 44.05
+  },
+  "scores_out_of_5": {
+    "provenance_and_registration": 5,
+    "detection_traceability": 5,
+    "candidate_label_discipline": 5,
+    "threshold_behavior": 4,
+    "validation_readiness": 2,
+    "visual_repair_dashboard_evidence": 1
+  },
+  "workflow_evidence_maturity_average": 3.67,
+  "accuracy_score": null,
+  "accuracy_score_reason": "No released or hidden per-strut ground-truth labels are available in the evaluated artifacts/repository for a registered truth join. Candidate counts must not be interpreted as confirmed missing or disconnected struts.",
+  "evidence": [
+    "inspection_summary.json records TIFF/registered JSON paths, volume shape, selected threshold 38197, seven representative Otsu thresholds, and candidate counts.",
+    "strut_candidates.csv contains one record per expected strut with material_fraction, longest_gap_samples, flag, and voxel coordinates.",
+    "threshold_candidates.csv records the tested thresholds and separation/clear-fraction trade-offs.",
+    "README.md explicitly says candidates require review and the STL is excluded because it is unregistered."
+  ],
+  "interpretation": "The run is a strong, traceable registered candidate screen. Its 44.05% automated flagged-candidate rate exceeds the 0.5% nominal missing-strut variant, but this is not a measured defect rate: flags include disconnected candidates and may include threshold/segmentation artifacts. The documented possibility that measured defects exceed nominal does not validate this discrepancy.",
+  "next_validation_step": "Obtain registered per-strut truth or perform blinded CT-neighborhood adjudication, then compute class-specific precision, recall, F1, confusion matrices, and percentage error."
+}
