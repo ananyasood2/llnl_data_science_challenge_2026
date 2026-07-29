@@ -1,0 +1,1 @@
+{"reasoning":"The generated mask reproduces the left-side connected lattice struts and the repeated interior node pattern at the same locations as the ground truth. There are minor boundary and speckle differences around several struts, but no major missing region or topology failure is visible.","score":4}

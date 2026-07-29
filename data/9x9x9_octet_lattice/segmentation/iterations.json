@@ -1,0 +1,32 @@
+[
+  {
+    "iteration": 1,
+    "threshold": 32399.2,
+    "foreground_fraction": 0.3291495334638022,
+    "score": -0.19433022309201475
+  },
+  {
+    "iteration": 2,
+    "threshold": 36449.1,
+    "foreground_fraction": 0.08389002499431947,
+    "score": 0.5592668332954631
+  },
+  {
+    "iteration": 3,
+    "threshold": 40499.0,
+    "foreground_fraction": 0.04686031766973782,
+    "score": 0.3124021177982521
+  },
+  {
+    "iteration": 4,
+    "threshold": 44548.9,
+    "foreground_fraction": 0.03206162822232484,
+    "score": 0.21374418814883223
+  },
+  {
+    "iteration": 5,
+    "threshold": 48598.799999999996,
+    "foreground_fraction": 0.023547434234154993,
+    "score": 0.15698289489436656
+  }
+]
