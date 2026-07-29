@@ -1,3 +1,8 @@
+import {
+  WorkflowSidebar,
+  buildWorkflowHref,
+  type WorkflowStep,
+} from "../components/WorkflowSidebar";
 import { getStructureViewerUrl } from "./viewerConfig";
 import { StructureViewerFrame } from "./StructureViewerFrame";
 
@@ -28,25 +33,36 @@ export default async function StructureAnalysisPage({
   );
   const datasetId = getParam(params, "datasetId", "No dataset selected");
   const threshold = getParam(params, "threshold", "Not provided");
+  const queryParams = new URLSearchParams(
+    Object.entries(params).flatMap(([key, value]) => {
+      if (Array.isArray(value)) {
+        return value[0] === undefined ? [] : [[key, value[0]]];
+      }
+
+      return value === undefined ? [] : [[key, value]];
+    }),
+  );
+  const workflowSteps: WorkflowStep[] = [
+    {
+      id: "project-dataset",
+      href: buildWorkflowHref("/project-dataset"),
+      state: "completed",
+    },
+    {
+      id: "segmentation",
+      href: buildWorkflowHref("/segmentation", queryParams),
+      state: "completed",
+    },
+    {
+      id: "structure-analysis",
+      href: buildWorkflowHref("/structure-analysis", queryParams),
+      state: "active",
+    },
+  ];
 
   return (
     <main className="workspace">
-      <aside className="rail" aria-label="Pipeline context">
-        <div className="mark" aria-hidden="true">
-          ◈
-        </div>
-        <div>
-          <p className="rail-kicker">Step 3</p>
-          <p className="rail-title">3D Structure Analysis</p>
-        </div>
-        <div className="rail-rule" />
-        <span className="status-pill">
-          <span aria-hidden="true">●</span> Dash viewer
-        </span>
-        <p className="rail-copy">
-          Validate the prepared CT segmentation using the existing 3D Dash dashboard.
-        </p>
-      </aside>
+      <WorkflowSidebar steps={workflowSteps} />
 
       <section className="content structure-content">
         <div className="eyebrow">Validation</div>
