@@ -10,6 +10,11 @@ import {
   type PointerEvent,
 } from "react";
 import {
+  WorkflowSidebar,
+  buildWorkflowHref,
+  type WorkflowStep,
+} from "../components/WorkflowSidebar";
+import {
   formatAnalysisStatus,
   formatVoxelSize,
   type AnalysisJobStatus,
@@ -1288,6 +1293,23 @@ export function SegmentationClient({
   const continueHref = structureAnalysisReady
     ? buildStructureAnalysisHref(datasetContext, segmentationSave.result, searchParams)
     : null;
+  const workflowSteps: WorkflowStep[] = [
+    {
+      id: "project-dataset",
+      href: buildWorkflowHref("/project-dataset"),
+      state: "completed",
+    },
+    {
+      id: "segmentation",
+      href: buildWorkflowHref("/segmentation", searchParams),
+      state: "active",
+    },
+    {
+      id: "structure-analysis",
+      href: continueHref,
+      state: continueHref ? "available" : "locked",
+    },
+  ];
 
   useEffect(() => {
     if (!datasetContext.datasetId) {
@@ -1734,23 +1756,7 @@ export function SegmentationClient({
 
   return (
     <main className="workspace">
-      <aside className="rail" aria-label="Pipeline context">
-        <div className="mark" aria-hidden="true">
-          ◈
-        </div>
-        <div>
-          <p className="rail-kicker">Step 2</p>
-          <p className="rail-title">CT Preparation</p>
-        </div>
-        <div className="rail-rule" />
-        <span className="status-pill">
-          <span aria-hidden="true">●</span> Preview scaffold
-        </span>
-        <p className="rail-copy">
-          Inspect slices, tune a lightweight threshold preview, and prepare the final
-          segmentation result for the 3D Structure Analysis page.
-        </p>
-      </aside>
+      <WorkflowSidebar steps={workflowSteps} />
 
       <section className="content dataset-content">
         <div className="eyebrow">Segmentation</div>

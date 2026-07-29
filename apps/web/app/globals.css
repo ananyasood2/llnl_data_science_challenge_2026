@@ -44,6 +44,20 @@ body {
   border-right: 1px solid #213759;
 }
 
+.workflow-rail {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  min-height: 100vh;
+}
+
+.workflow-rail-header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.85rem;
+  align-items: center;
+}
+
 .mark {
   display: grid;
   width: 2.7rem;
@@ -78,6 +92,121 @@ body {
   height: 1px;
   margin: 1.6rem 0;
   background: #294462;
+}
+
+.workflow-steps {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.workflow-step {
+  display: grid;
+  grid-template-columns: 1.7rem minmax(0, 1fr) auto;
+  gap: 0.7rem;
+  align-items: center;
+  width: 100%;
+  min-height: 4.7rem;
+  padding: 0.7rem;
+  color: #c9d7e8;
+  text-align: left;
+  text-decoration: none;
+  border: 1px solid #2a4260;
+  border-radius: 0.5rem;
+  background: rgb(255 255 255 / 4%);
+}
+
+button.workflow-step {
+  font: inherit;
+}
+
+.workflow-step[href]:hover,
+.workflow-step[href]:focus-visible {
+  color: #f8fbff;
+  border-color: #60a5fa;
+  background: rgb(96 165 250 / 13%);
+  outline: none;
+}
+
+.workflow-step:focus-visible {
+  outline: 2px solid #7dd3fc;
+  outline-offset: 2px;
+}
+
+.workflow-step-active {
+  color: #f8fbff;
+  border-color: #7dd3fc;
+  background: rgb(125 211 252 / 14%);
+  box-shadow: inset 3px 0 0 #7dd3fc;
+}
+
+.workflow-step-completed {
+  border-color: rgb(142 232 200 / 58%);
+}
+
+.workflow-step-locked {
+  color: #7e8da2;
+  cursor: not-allowed;
+  background: rgb(8 18 37 / 28%);
+  border-color: #26384f;
+}
+
+.workflow-step-index {
+  display: grid;
+  width: 1.7rem;
+  height: 1.7rem;
+  place-items: center;
+  color: #d9f6ff;
+  font-size: 0.78rem;
+  font-weight: 800;
+  border: 1px solid currentcolor;
+  border-radius: 999px;
+}
+
+.workflow-step-body {
+  display: grid;
+  min-width: 0;
+  gap: 0.18rem;
+}
+
+.workflow-step-title,
+.workflow-step-summary,
+.workflow-step-state {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-step-title {
+  font-size: 0.9rem;
+  font-weight: 760;
+}
+
+.workflow-step-summary {
+  color: #aebdd0;
+  font-size: 0.72rem;
+}
+
+.workflow-step-state {
+  justify-self: end;
+  max-width: 5rem;
+  padding: 0.18rem 0.38rem;
+  color: #8ee8c8;
+  font-size: 0.62rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  border: 1px solid currentcolor;
+  border-radius: 999px;
+}
+
+.workflow-step-active .workflow-step-state {
+  color: #7dd3fc;
+}
+
+.workflow-step-locked .workflow-step-state {
+  color: #8c9aab;
 }
 
 .status-pill,
@@ -1220,11 +1349,40 @@ input[type="file"] {
   }
 
   .rail {
-    display: grid;
-    grid-template-columns: auto 1fr auto;
-    gap: 0.8rem;
-    align-items: center;
     padding: 1rem;
+  }
+
+  .workflow-rail {
+    position: static;
+    min-height: auto;
+    border-right: 0;
+    border-bottom: 1px solid #213759;
+  }
+
+  .workflow-rail-header {
+    display: none;
+  }
+
+  .workflow-steps {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.45rem;
+  }
+
+  .workflow-step {
+    grid-template-columns: 1.45rem minmax(0, 1fr);
+    min-height: 3.75rem;
+    padding: 0.55rem;
+  }
+
+  .workflow-step-summary,
+  .workflow-step-state {
+    display: none;
+  }
+
+  .workflow-step-title {
+    font-size: 0.76rem;
+    line-height: 1.2;
+    white-space: normal;
   }
 
   .mark,

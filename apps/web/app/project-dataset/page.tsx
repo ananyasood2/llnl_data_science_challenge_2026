@@ -3,6 +3,11 @@
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
+  WorkflowSidebar,
+  buildWorkflowHref,
+  type WorkflowStep,
+} from "../components/WorkflowSidebar";
+import {
   GeometryMetadata,
   formatGeometryBounds,
   formatGeometryDimensions,
@@ -578,6 +583,64 @@ export default function ProjectDatasetPage() {
   const requiredItemsPassed = checklistItems
     .filter((item) => !item.optional)
     .every((item) => item.passed);
+  const activeDatasetId =
+    slotStates.ctTiffStack.result?.dataset_id ??
+    slotStates.npyVolume.result?.dataset_id ??
+    null;
+  const activeDimensions =
+    slotStates.ctTiffStack.result?.dimensions ??
+    slotStates.npyVolume.result?.dimensions;
+  const activeDatasetName =
+    slotStates.ctTiffStack.files[0] ??
+    slotStates.npyVolume.files[0] ??
+    "validated dataset";
+  const downstreamParams =
+    activeDatasetId && activeDimensions && requiredItemsPassed && !anyLoading
+      ? new URLSearchParams({
+          dataset: activeDatasetName,
+          projectId: "Pending",
+          datasetId: activeDatasetId,
+          scaleUnit: voxelSizeKnown ? "micron" : "voxel",
+          x: String(activeDimensions.x ?? "unknown"),
+          y: String(activeDimensions.y ?? "unknown"),
+          z: String(activeDimensions.z ?? "unknown"),
+        })
+      : null;
+
+  if (
+    downstreamParams &&
+    voxelSizeKnown &&
+    hasPositiveVoxelSize(voxelSizeMicron)
+  ) {
+    downstreamParams.set("voxelSizeMicron", voxelSizeMicron);
+  } else if (
+    downstreamParams &&
+    voxelSizeKnown &&
+    typeof detectedVoxelSize === "number"
+  ) {
+    downstreamParams.set("voxelSizeMicron", String(detectedVoxelSize));
+  }
+
+  const downstreamHref = downstreamParams
+    ? buildWorkflowHref("/segmentation", downstreamParams)
+    : null;
+  const workflowSteps: WorkflowStep[] = [
+    {
+      id: "project-dataset",
+      href: buildWorkflowHref("/project-dataset"),
+      state: "active",
+    },
+    {
+      id: "segmentation",
+      href: downstreamHref,
+      state: downstreamHref ? "available" : "locked",
+    },
+    {
+      id: "structure-analysis",
+      href: null,
+      state: "locked",
+    },
+  ];
 
   async function handleFileChange(slotId: DatasetSlotId, fileList: FileList | null) {
     const selectedFiles = Array.from(fileList ?? []);
@@ -761,23 +824,7 @@ export default function ProjectDatasetPage() {
 
   return (
     <main className="workspace">
-      <aside className="rail" aria-label="Pipeline context">
-        <div className="mark" aria-hidden="true">
-          ◈
-        </div>
-        <div>
-          <p className="rail-kicker">Step 1</p>
-          <p className="rail-title">Project / Dataset</p>
-        </div>
-        <div className="rail-rule" />
-        <span className="status-pill">
-          <span aria-hidden="true">●</span> Intake scaffold
-        </span>
-        <p className="rail-copy">
-          Define the inspection project and select the dataset that will feed the
-          segmentation and skeletonization pipeline.
-        </p>
-      </aside>
+      <WorkflowSidebar steps={workflowSteps} />
 
       <section className="content dataset-content">
         <div className="eyebrow">What am I analyzing?</div>
