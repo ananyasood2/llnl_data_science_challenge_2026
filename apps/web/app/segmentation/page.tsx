@@ -28,6 +28,7 @@ export default async function SegmentationPage({
   const scaleUnit = getParam(params, "scaleUnit", "voxel") === "micron" ? "micron" : "voxel";
   const datasetContext: DatasetContext = {
     datasetId: getParam(params, "datasetId", "") || null,
+    jobId: getParam(params, "jobId", "") || null,
     dataset: getParam(params, "dataset", "No dataset selected"),
     projectId: getParam(params, "projectId", "Pending"),
     dimensions: {

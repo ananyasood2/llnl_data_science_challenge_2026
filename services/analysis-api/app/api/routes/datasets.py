@@ -7,6 +7,7 @@ import re
 import struct
 import uuid
 import zlib
+from datetime import UTC, datetime
 from functools import lru_cache
 from io import BytesIO
 from pathlib import Path
@@ -15,7 +16,11 @@ from typing import Any, Literal, NamedTuple
 import numpy as np
 import tifffile
 from fastapi import APIRouter, File, Form, HTTPException, Query, Response, UploadFile
-from pydantic import BaseModel, ConfigDict
+from fastapi.responses import FileResponse
+from pydantic import BaseModel, ConfigDict, Field
+from skimage.filters import threshold_otsu
+from skimage.measure import label
+from skimage.morphology import skeletonize
 
 from app.core.config import get_settings
 from app.schemas.datasets import (
@@ -71,6 +76,86 @@ class SegmentationResponse(BaseModel):
     mask_path: str
     slice_preview_path: str
     demo_mode: bool
+
+
+AnalysisJobStatus = Literal[
+    "queued", "segmenting", "skeletonizing", "complete", "failed"
+]
+
+
+class StartAnalysisRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project_id: str | None = None
+    dataset_name: str | None = None
+    voxel_size_micron: float | None = None
+
+
+class ArtifactSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    path: str
+
+
+class SegmentationSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    threshold: float
+    foreground_voxel_count: int
+    background_voxel_count: int
+    dimensions: DatasetDimensions
+    mask_path: str
+    slice_preview_path: str
+    summary_path: str
+
+
+class VoxelBounds(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    x: tuple[int, int] | None
+    y: tuple[int, int] | None
+    z: tuple[int, int] | None
+    unit: Literal["pixels/voxels", "microns"]
+
+
+class SkeletonSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    skeleton_voxel_count: int
+    connected_components: int
+    endpoints: int
+    branch_points: int
+    disconnected_regions: int
+    bounds: VoxelBounds
+    skeleton_path: str
+    slice_preview_path: str
+    summary_path: str
+
+
+class AnalysisJobResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    job_id: str
+    project_id: str
+    dataset_id: str
+    dataset_name: str | None
+    status: AnalysisJobStatus
+    progress: list[AnalysisJobStatus]
+    segmentation: SegmentationSummary | None = None
+    skeletonization: SkeletonSummary | None = None
+    artifacts: dict[str, ArtifactSummary] = Field(default_factory=dict)
+    error: str | None = None
+    created_at: str
+    updated_at: str
+    scale_unit: Literal["pixels/voxels", "microns"]
+
+
+class ArtifactManifestResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    dataset_id: str
+    project_id: str
+    artifacts: dict[str, ArtifactSummary]
 
 
 class VoxelProbeRequest(BaseModel):
@@ -184,7 +269,7 @@ async def get_dataset_slice(
     if view == "skeleton":
         raise HTTPException(
             status_code=404,
-            detail=f"{view} view has not been generated for this dataset.",
+            detail=f"{view} view is reserved for the structure-analysis page.",
         )
 
     storage_root = get_settings().upload_storage_root
@@ -222,6 +307,108 @@ async def get_dataset_slice(
             "X-Slice-Index": str(index),
             "X-View": view,
         },
+    )
+
+
+@router.post("/{dataset_id}/analysis-jobs", response_model=AnalysisJobResponse)
+async def start_analysis_job(
+    dataset_id: str,
+    request: StartAnalysisRequest,
+) -> AnalysisJobResponse:
+    """Run segmentation and skeletonization for a persisted CT dataset."""
+    dataset_dir = _get_existing_dataset_dir(dataset_id)
+    job_id = str(uuid.uuid4())
+    project_id = _ensure_project_id(dataset_dir, request.project_id)
+    scale_unit: Literal["pixels/voxels", "microns"] = (
+        "microns" if request.voxel_size_micron is not None else "pixels/voxels"
+    )
+    job = _base_job_record(
+        job_id=job_id,
+        project_id=project_id,
+        dataset_id=dataset_id,
+        dataset_name=request.dataset_name,
+        scale_unit=scale_unit,
+    )
+    _write_json(dataset_dir / "analysis_job.json", job)
+
+    try:
+        job["status"] = "segmenting"
+        job["progress"].append("segmenting")
+        job["updated_at"] = _utc_now()
+        _write_json(dataset_dir / "analysis_job.json", job)
+
+        volume = _load_persisted_original_volume(dataset_dir)
+        segmentation = _run_segmentation_agent(dataset_dir, volume)
+        job["segmentation"] = segmentation
+        job["artifacts"].update(
+            {
+                "segmentation_mask": {"path": segmentation["mask_path"]},
+                "segmentation_summary": {"path": segmentation["summary_path"]},
+            }
+        )
+        del volume
+
+        job["status"] = "skeletonizing"
+        job["progress"].append("skeletonizing")
+        job["updated_at"] = _utc_now()
+        _write_json(dataset_dir / "analysis_job.json", job)
+
+        skeletonization = _run_skeletonization_agent(dataset_dir, scale_unit)
+        job["skeletonization"] = skeletonization
+        job["artifacts"].update(
+            {
+                "skeleton": {"path": skeletonization["skeleton_path"]},
+                "skeleton_summary": {"path": skeletonization["summary_path"]},
+            }
+        )
+        job["status"] = "complete"
+        job["progress"].append("complete")
+    except Exception as exc:
+        job["status"] = "failed"
+        job["progress"].append("failed")
+        job["error"] = str(exc)
+
+    job["updated_at"] = _utc_now()
+    _write_json(dataset_dir / "analysis_job.json", job)
+    return AnalysisJobResponse.model_validate(job)
+
+
+@router.get("/{dataset_id}/analysis-jobs/latest", response_model=AnalysisJobResponse)
+async def get_latest_analysis_job(dataset_id: str) -> AnalysisJobResponse:
+    dataset_dir = _get_existing_dataset_dir(dataset_id)
+    job_path = dataset_dir / "analysis_job.json"
+    if not job_path.is_file():
+        raise HTTPException(status_code=404, detail="Analysis job not found.")
+    return AnalysisJobResponse.model_validate(json.loads(job_path.read_text()))
+
+
+@router.get("/{dataset_id}/artifacts", response_model=ArtifactManifestResponse)
+async def list_dataset_artifacts(dataset_id: str) -> ArtifactManifestResponse:
+    dataset_dir = _get_existing_dataset_dir(dataset_id)
+    job = _load_latest_job_record(dataset_dir)
+    return ArtifactManifestResponse(
+        dataset_id=dataset_id,
+        project_id=job["project_id"],
+        artifacts=job["artifacts"],
+    )
+
+
+@router.get("/{dataset_id}/artifacts/{artifact_name}")
+async def get_dataset_artifact(dataset_id: str, artifact_name: str) -> FileResponse:
+    dataset_dir = _get_existing_dataset_dir(dataset_id)
+    job = _load_latest_job_record(dataset_dir)
+    artifact = job["artifacts"].get(artifact_name)
+    if not artifact:
+        raise HTTPException(status_code=404, detail="Artifact not found.")
+
+    artifact_path = dataset_dir / artifact["path"]
+    if not artifact_path.is_file() or artifact_path.parent != dataset_dir:
+        raise HTTPException(status_code=404, detail="Artifact file not found.")
+
+    return FileResponse(
+        artifact_path,
+        media_type=_artifact_media_type(artifact_path),
+        filename=artifact_path.name,
     )
 
 
@@ -844,6 +1031,211 @@ def _persist_intake_assets(
         return existing_dataset_id
 
     return _persist_uploaded_dataset(uploaded_files + generated_files)
+
+
+def _get_existing_dataset_dir(dataset_id: str) -> Path:
+    dataset_dir = get_settings().upload_storage_root / dataset_id
+    if not dataset_dir.is_dir():
+        raise HTTPException(status_code=404, detail="Dataset not found.")
+    return dataset_dir
+
+
+def _ensure_project_id(dataset_dir: Path, candidate: str | None) -> str:
+    project_path = dataset_dir / "project.json"
+    if project_path.is_file():
+        data = json.loads(project_path.read_text())
+        project_id = data.get("project_id")
+        if isinstance(project_id, str) and project_id:
+            return project_id
+
+    project_id = (
+        candidate
+        if candidate and candidate.lower() != "pending"
+        else f"inspection-{uuid.uuid4()}"
+    )
+    _write_json(
+        project_path,
+        {
+            "project_id": project_id,
+            "created_at": _utc_now(),
+        },
+    )
+    return project_id
+
+
+def _base_job_record(
+    *,
+    job_id: str,
+    project_id: str,
+    dataset_id: str,
+    dataset_name: str | None,
+    scale_unit: Literal["pixels/voxels", "microns"],
+) -> dict[str, Any]:
+    now = _utc_now()
+    return {
+        "job_id": job_id,
+        "project_id": project_id,
+        "dataset_id": dataset_id,
+        "dataset_name": dataset_name,
+        "status": "queued",
+        "progress": ["queued"],
+        "segmentation": None,
+        "skeletonization": None,
+        "artifacts": {},
+        "error": None,
+        "created_at": now,
+        "updated_at": now,
+        "scale_unit": scale_unit,
+    }
+
+
+def _run_segmentation_agent(dataset_dir: Path, volume: np.ndarray) -> dict[str, Any]:
+    threshold = _choose_initial_threshold(volume)
+    mask = volume > threshold
+    foreground_voxel_count = int(np.count_nonzero(mask))
+    background_voxel_count = int(mask.size - foreground_voxel_count)
+    if foreground_voxel_count == 0:
+        raise ValueError(
+            f"Segmentation threshold {threshold:.6g} produced no foreground voxels."
+        )
+
+    mask_path = dataset_dir / "segmentation.npy"
+    preview_path = dataset_dir / "segmentation_slice_preview.png"
+    summary_path = dataset_dir / "segmentation_summary.json"
+    middle_z = mask.shape[0] // 2
+    np.save(mask_path, mask)
+    preview_path.write_bytes(
+        _encode_grayscale_png(_extract_slice(mask, "z", middle_z).astype(np.uint8) * 255)
+    )
+    summary = {
+        "threshold": threshold,
+        "foreground_voxel_count": foreground_voxel_count,
+        "background_voxel_count": background_voxel_count,
+        "dimensions": {
+            "x": int(mask.shape[2]),
+            "y": int(mask.shape[1]),
+            "z": int(mask.shape[0]),
+        },
+        "mask_path": "segmentation.npy",
+        "slice_preview_path": "segmentation_slice_preview.png",
+        "summary_path": "segmentation_summary.json",
+    }
+    _write_json(summary_path, summary)
+    return summary
+
+
+def _choose_initial_threshold(volume: np.ndarray) -> float:
+    finite = np.asarray(volume[np.isfinite(volume)], dtype=np.float32)
+    if finite.size == 0:
+        raise ValueError("Volume contains no finite intensity values.")
+    if np.isclose(float(finite.min()), float(finite.max())):
+        raise ValueError("Volume has no usable intensity contrast for segmentation.")
+
+    sample = finite
+    max_samples = 2_000_000
+    if finite.size > max_samples:
+        step = max(1, finite.size // max_samples)
+        sample = finite[::step]
+
+    return float(threshold_otsu(sample))
+
+
+def _run_skeletonization_agent(
+    dataset_dir: Path,
+    scale_unit: Literal["pixels/voxels", "microns"],
+) -> dict[str, Any]:
+    mask_path = dataset_dir / "segmentation.npy"
+    if not mask_path.is_file():
+        raise ValueError("Segmentation mask is missing; skeletonization was not run.")
+
+    mask = np.load(mask_path, allow_pickle=False)
+    skeleton = skeletonize(mask > 0)
+    skeleton_voxel_count = int(np.count_nonzero(skeleton))
+    labeled = label(skeleton, connectivity=3)
+    connected_components = int(labeled.max())
+    endpoints, branch_points = _count_skeleton_nodes(skeleton)
+    bounds = _voxel_bounds(skeleton, scale_unit)
+
+    skeleton_path = dataset_dir / "skeleton.npy"
+    preview_path = dataset_dir / "skeleton_slice_preview.png"
+    summary_path = dataset_dir / "skeleton_summary.json"
+    middle_z = skeleton.shape[0] // 2
+    np.save(skeleton_path, skeleton)
+    preview_path.write_bytes(
+        _encode_grayscale_png(
+            _extract_slice(skeleton, "z", middle_z).astype(np.uint8) * 255
+        )
+    )
+    summary = {
+        "skeleton_voxel_count": skeleton_voxel_count,
+        "connected_components": connected_components,
+        "endpoints": endpoints,
+        "branch_points": branch_points,
+        "disconnected_regions": max(0, connected_components - 1),
+        "bounds": bounds,
+        "skeleton_path": "skeleton.npy",
+        "slice_preview_path": "skeleton_slice_preview.png",
+        "summary_path": "skeleton_summary.json",
+    }
+    _write_json(summary_path, summary)
+    return summary
+
+
+def _count_skeleton_nodes(skeleton: np.ndarray) -> tuple[int, int]:
+    padded = np.pad(skeleton.astype(np.uint8, copy=False), 1)
+    coordinates = np.argwhere(skeleton)
+    endpoints = 0
+    branch_points = 0
+    for z, y, x in coordinates:
+        neighborhood = padded[z : z + 3, y : y + 3, x : x + 3]
+        neighbors = int(np.count_nonzero(neighborhood)) - 1
+        if neighbors == 1:
+            endpoints += 1
+        elif neighbors >= 3:
+            branch_points += 1
+    return endpoints, branch_points
+
+
+def _voxel_bounds(
+    skeleton: np.ndarray,
+    unit: Literal["pixels/voxels", "microns"],
+) -> dict[str, Any]:
+    if not np.any(skeleton):
+        return {"x": None, "y": None, "z": None, "unit": unit}
+    coords = np.argwhere(skeleton)
+    mins = coords.min(axis=0)
+    maxs = coords.max(axis=0)
+    return {
+        "x": (int(mins[2]), int(maxs[2])),
+        "y": (int(mins[1]), int(maxs[1])),
+        "z": (int(mins[0]), int(maxs[0])),
+        "unit": unit,
+    }
+
+
+def _write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True))
+
+
+def _utc_now() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+def _load_latest_job_record(dataset_dir: Path) -> dict[str, Any]:
+    job_path = dataset_dir / "analysis_job.json"
+    if not job_path.is_file():
+        raise HTTPException(status_code=404, detail="Analysis job not found.")
+    return json.loads(job_path.read_text())
+
+
+def _artifact_media_type(path: Path) -> str:
+    if path.suffix == ".json":
+        return "application/json"
+    if path.suffix == ".npy":
+        return "application/octet-stream"
+    if path.suffix == ".png":
+        return "image/png"
+    return "application/octet-stream"
 
 
 def _expected_dimensions(

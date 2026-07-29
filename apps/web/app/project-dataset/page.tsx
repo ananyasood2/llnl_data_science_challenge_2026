@@ -100,6 +100,7 @@ type StartAnalysisButtonProps = {
   disabled: boolean;
   loading: boolean;
   onClick: () => void;
+  error?: string | null;
 };
 
 const datasetFiles: DatasetFileSlot[] = [
@@ -474,15 +475,21 @@ function ValidationChecklist({ items }: ValidationChecklistProps) {
   );
 }
 
-function StartAnalysisButton({ disabled, loading, onClick }: StartAnalysisButtonProps) {
+function StartAnalysisButton({
+  disabled,
+  loading,
+  onClick,
+  error,
+}: StartAnalysisButtonProps) {
   return (
     <section className="start-panel" aria-label="Start analysis">
       <div>
         <p className="panel-kicker">Pipeline</p>
         <h2>Ready for segmentation</h2>
+        {error ? <p className="inline-error">{error}</p> : null}
       </div>
       <button type="button" disabled={disabled} onClick={onClick}>
-        {loading ? "Validating dataset" : "Start analysis"}
+        {loading ? "Running analysis" : "Start analysis"}
       </button>
     </section>
   );
@@ -499,6 +506,10 @@ export default function ProjectDatasetPage() {
     useState(relativeDensityOptions[0]);
   const [intentionalDefectCondition, setIntentionalDefectCondition] =
     useState<SampleLookupProps["intentionalDefectCondition"]>("0%");
+  const [analysisStart, setAnalysisStart] = useState<{
+    loading: boolean;
+    error: string | null;
+  }>({ loading: false, error: null });
 
   const anyLoading = Object.values(slotStates).some(
     (slotState) => slotState.status === "loading",
@@ -651,22 +662,80 @@ export default function ProjectDatasetPage() {
     );
   }
 
-  function handleStartAnalysis() {
+  async function handleStartAnalysis() {
     const dimensions = slotStates.ctTiffStack.result?.dimensions;
     const datasetName =
       slotStates.ctTiffStack.files[0] ?? slotStates.npyVolume.files[0] ?? "validated dataset";
     const datasetId =
       slotStates.ctTiffStack.result?.dataset_id ??
       slotStates.npyVolume.result?.dataset_id;
+
+    if (!datasetId) {
+      setAnalysisStart({
+        loading: false,
+        error: "Dataset has not been persisted yet.",
+      });
+      return;
+    }
+
+    setAnalysisStart({ loading: true, error: null });
+
+    let jobPayload: {
+      job_id: string;
+      project_id: string;
+      status: string;
+    };
+
+    try {
+      const response = await fetch(
+        `${getAnalysisApiUrl()}/v1/datasets/${encodeURIComponent(
+          datasetId,
+        )}/analysis-jobs`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            project_id: null,
+            dataset_name: datasetName,
+            voxel_size_micron: voxelSizeKnown
+              ? Number(
+                  hasPositiveVoxelSize(voxelSizeMicron)
+                    ? voxelSizeMicron
+                    : detectedVoxelSize,
+                )
+              : null,
+          }),
+        },
+      );
+
+      if (!response.ok) {
+        throw new Error(`Analysis job failed with HTTP ${response.status}.`);
+      }
+
+      jobPayload = (await response.json()) as typeof jobPayload;
+      if (jobPayload.status === "failed") {
+        throw new Error("Analysis job failed. Open segmentation for details.");
+      }
+    } catch (error) {
+      setAnalysisStart({
+        loading: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Unable to start the analysis job.",
+      });
+      return;
+    }
+
     const params = new URLSearchParams({
-      projectId: "Pending",
+      projectId: jobPayload.project_id,
       dataset: datasetName,
       scaleUnit: voxelSizeKnown ? "micron" : "voxel",
+      datasetId,
+      jobId: jobPayload.job_id,
     });
-
-    if (datasetId) {
-      params.set("datasetId", datasetId);
-    }
 
     if (voxelSizeKnown) {
       params.set(
@@ -687,8 +756,6 @@ export default function ProjectDatasetPage() {
       params.set("z", String(dimensions.z));
     }
 
-    // TODO: Replace query-param handoff with a real analysis-job backend contract
-    // once the planned ARCHITECTURE.md analysis jobs resource is defined.
     router.push(`/segmentation?${params.toString()}`);
   }
 
@@ -760,8 +827,9 @@ export default function ProjectDatasetPage() {
           </div>
           <ValidationChecklist items={checklistItems} />
           <StartAnalysisButton
-            disabled={!requiredItemsPassed || anyLoading}
-            loading={anyLoading}
+            disabled={!requiredItemsPassed || anyLoading || analysisStart.loading}
+            loading={anyLoading || analysisStart.loading}
+            error={analysisStart.error}
             onClick={handleStartAnalysis}
           />
         </div>

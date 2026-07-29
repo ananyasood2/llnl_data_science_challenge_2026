@@ -711,13 +711,20 @@ input[type="file"] {
   border-radius: 0.8rem;
 }
 
-.slice-image {
-  display: block;
+.slice-image-layer {
+  position: relative;
+  display: inline-block;
   max-width: min(100%, 34rem);
   max-height: min(70vh, 34rem);
-  object-fit: contain;
   transform-origin: center;
   transition: transform 120ms ease;
+}
+
+.slice-image {
+  display: block;
+  max-width: 100%;
+  max-height: min(70vh, 34rem);
+  object-fit: contain;
   border: 1px solid #273340;
   border-radius: 0.35rem;
   background: #000000;
@@ -725,17 +732,46 @@ input[type="file"] {
 
 .mask-preview-image {
   position: absolute;
+  inset: 0;
   display: block;
-  max-width: min(100%, 34rem);
-  max-height: min(70vh, 34rem);
+  width: 100%;
+  height: 100%;
   object-fit: contain;
   pointer-events: none;
   mix-blend-mode: screen;
-  transform-origin: center;
-  transition:
-    opacity 120ms ease,
-    transform 120ms ease;
+  transition: opacity 120ms ease;
   border-radius: 0.35rem;
+}
+
+.voxel-marker {
+  position: absolute;
+  z-index: 2;
+  width: 1.15rem;
+  height: 1.15rem;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+}
+
+.voxel-marker::before,
+.voxel-marker::after {
+  position: absolute;
+  content: "";
+  background: #f97316;
+  box-shadow: 0 0 0 1px #ffffff;
+}
+
+.voxel-marker::before {
+  top: 50%;
+  left: -0.45rem;
+  width: calc(100% + 0.9rem);
+  height: 2px;
+}
+
+.voxel-marker::after {
+  top: -0.45rem;
+  left: 50%;
+  width: 2px;
+  height: calc(100% + 0.9rem);
 }
 
 .mask-loading {
@@ -872,6 +908,50 @@ input[type="file"] {
 .toggle-row input {
   width: 1rem;
   min-height: 1rem;
+}
+
+.voxel-nav-form {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+  gap: 0.55rem;
+  align-items: start;
+}
+
+.voxel-nav-form label {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.voxel-nav-form label span {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 730;
+  text-transform: uppercase;
+}
+
+.voxel-nav-form small {
+  display: block;
+  margin-top: 0.1rem;
+  font-size: 0.66rem;
+  font-weight: 650;
+  text-transform: none;
+}
+
+.voxel-nav-form input {
+  width: 100%;
+  min-height: 2.25rem;
+  padding: 0.45rem 0.5rem;
+  border: 1px solid #cfdbe8;
+  border-radius: 0.45rem;
+}
+
+.voxel-nav-form input[aria-invalid="true"] {
+  border-color: #b42318;
+}
+
+.voxel-nav-form button {
+  align-self: end;
+  min-height: 2.25rem;
 }
 
 .metric-list {

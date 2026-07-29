@@ -2,10 +2,34 @@
 
 /* eslint-disable @next/next/no-img-element */
 
-import { useEffect, useRef, useState, type PointerEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type PointerEvent,
+} from "react";
+import {
+  formatAnalysisStatus,
+  formatVoxelSize,
+  hasPositiveNumericValue,
+  type AnalysisJobStatus,
+} from "./analysisFormatting";
+import {
+  getMarkerPosition,
+  getSliceIndexForCoordinate,
+  getSliceLimit,
+  getVolumeBounds,
+  validateVoxelCoordinateInput,
+  type Axis,
+  type VolumeBounds,
+  type VolumeCoordinate,
+  type VoxelCoordinateInput,
+} from "./coordinateNavigation";
 
 export type DatasetContext = {
   datasetId: string | null;
+  jobId: string | null;
   dataset: string;
   projectId: string;
   dimensions: {
@@ -17,8 +41,7 @@ export type DatasetContext = {
   scaleUnit: "micron" | "voxel";
 };
 
-type Axis = "X" | "Y" | "Z";
-type ViewMode = "original" | "segmentation" | "skeleton" | "defects";
+type ViewMode = "original" | "segmentation" | "defects";
 
 type SliceViewerProps = {
   axis: Axis;
@@ -41,6 +64,8 @@ type SliceViewerProps = {
   onSliceIndexChange: (index: number) => void;
   onProbeClick: (coordinate: VolumeCoordinate) => void;
   onProbeHover: (coordinate: VolumeCoordinate) => void;
+  selectedCoordinate: VolumeCoordinate | null;
+  bounds: VolumeBounds;
 };
 
 type ViewModeTabsProps = {
@@ -64,6 +89,8 @@ type SegmentationOverlayToggleProps = {
 };
 
 type VoxelProbeProps = {
+  headingId: string;
+  title: string;
   coordinate: {
     x: number;
     y: number;
@@ -71,6 +98,14 @@ type VoxelProbeProps = {
   };
   intensity: number | null;
   maskValue: 0 | 1 | null;
+};
+
+type VoxelNavigationProps = {
+  bounds: VolumeBounds;
+  values: VoxelCoordinateInput;
+  errors: Partial<Record<keyof VoxelCoordinateInput, string>>;
+  onChange: (axis: keyof VoxelCoordinateInput, value: string) => void;
+  onSubmit: () => void;
 };
 
 type IntensityHistogramProps = {
@@ -120,12 +155,6 @@ type ThresholdPreviewState = {
   message: string | null;
 };
 
-type VolumeCoordinate = {
-  x: number;
-  y: number;
-  z: number;
-};
-
 type SavedSegmentation = {
   status: string;
   dataset_id: string;
@@ -137,33 +166,51 @@ type SavedSegmentation = {
   demo_mode: boolean;
 };
 
+type AnalysisJob = {
+  job_id: string;
+  project_id: string;
+  dataset_id: string;
+  status: AnalysisJobStatus;
+  progress: AnalysisJobStatus[];
+  error: string | null;
+  scale_unit: "pixels/voxels" | "microns";
+  segmentation: {
+    threshold: number;
+    foreground_voxel_count: number;
+    background_voxel_count: number;
+    dimensions: { x: number; y: number; z: number };
+    mask_path: string;
+    slice_preview_path: string;
+    summary_path: string;
+  } | null;
+  skeletonization: {
+    skeleton_voxel_count: number;
+    connected_components: number;
+    endpoints: number;
+    branch_points: number;
+    disconnected_regions: number;
+    bounds: {
+      x: [number, number] | null;
+      y: [number, number] | null;
+      z: [number, number] | null;
+      unit: "pixels/voxels" | "microns";
+    };
+    skeleton_path: string;
+    slice_preview_path: string;
+    summary_path: string;
+  } | null;
+};
+
 const viewModes: {
   id: Exclude<ViewMode, "defects">;
   label: string;
 }[] = [
   { id: "original", label: "Original" },
   { id: "segmentation", label: "Segmentation" },
-  { id: "skeleton", label: "Skeleton" },
 ];
 
 function getAnalysisApiUrl() {
   return process.env.NEXT_PUBLIC_ANALYSIS_API_URL ?? "http://localhost:8000";
-}
-
-function getSliceLimit(axis: Axis, context: DatasetContext) {
-  const rawValue =
-    axis === "X"
-      ? context.dimensions.x
-      : axis === "Y"
-        ? context.dimensions.y
-        : context.dimensions.z;
-  const parsed = Number(rawValue);
-
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return 255;
-  }
-
-  return Math.max(0, Math.floor(parsed) - 1);
 }
 
 function getSliceUrl(
@@ -323,21 +370,32 @@ async function saveSegmentation(datasetId: string, threshold: number) {
   return (await response.json()) as SavedSegmentation;
 }
 
-function formatVoxelCount(value: number | null) {
-  return typeof value === "number" ? value.toLocaleString() : "Pending";
-}
+async function fetchLatestAnalysisJob(datasetId: string, signal: AbortSignal) {
+  const response = await fetch(
+    `${getAnalysisApiUrl()}/v1/datasets/${encodeURIComponent(
+      datasetId,
+    )}/analysis-jobs/latest`,
+    {
+      headers: {
+        Accept: "application/json",
+      },
+      signal,
+    },
+  );
 
-function hasPositiveNumericValue(value: string) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed > 0;
-}
-
-function formatVoxelSize(context: DatasetContext) {
-  if (context.scaleUnit === "micron" && hasPositiveNumericValue(context.voxelSizeMicron)) {
-    return `${context.voxelSizeMicron} micron`;
+  if (response.status === 404) {
+    return null;
   }
 
-  return "Unknown; distances remain in pixels/voxels";
+  if (!response.ok) {
+    throw new Error(`Analysis job fetch failed with HTTP ${response.status}.`);
+  }
+
+  return (await response.json()) as AnalysisJob;
+}
+
+function formatVoxelCount(value: number | null) {
+  return typeof value === "number" ? value.toLocaleString() : "Pending";
 }
 
 function ViewModeTabs({ value, onChange }: ViewModeTabsProps) {
@@ -386,6 +444,8 @@ function SliceViewer({
   onSliceIndexChange,
   onProbeClick,
   onProbeHover,
+  selectedCoordinate,
+  bounds,
 }: SliceViewerProps) {
   function coordinateFromPointerEvent(event: PointerEvent<HTMLImageElement>) {
     const image = event.currentTarget;
@@ -433,6 +493,15 @@ function SliceViewer({
     }
   }
 
+  const selectedMarker =
+    selectedCoordinate &&
+    getSliceIndexForCoordinate(axis, selectedCoordinate) === sliceIndex
+      ? selectedCoordinate
+      : null;
+  const markerPosition = selectedMarker
+    ? getMarkerPosition(axis, selectedMarker, bounds)
+    : null;
+
   return (
     <section className="dataset-panel slice-viewer" aria-labelledby="slice-viewer-heading">
       <div className="slice-toolbar">
@@ -455,18 +524,20 @@ function SliceViewer({
 
       <div className="slice-canvas">
         {status === "ready" && imageUrl ? (
-          <>
+          <div
+            className="slice-image-layer"
+            style={{
+              transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${
+                zoomPercent / 100
+              })`,
+            }}
+          >
             <img
               className="slice-image"
               src={imageUrl}
               alt={`${viewMode} slice ${sliceIndex} on ${axis} axis`}
               onClick={handleClick}
               onPointerMove={handlePointerMove}
-              style={{
-                transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${
-                  zoomPercent / 100
-                })`,
-              }}
             />
             {overlayEnabled && maskPreviewUrl && viewMode === "original" ? (
               <img
@@ -476,9 +547,16 @@ function SliceViewer({
                 aria-hidden="true"
                 style={{
                   opacity: overlayOpacity,
-                  transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${
-                    zoomPercent / 100
-                  })`,
+                }}
+              />
+            ) : null}
+            {selectedMarker && markerPosition ? (
+              <span
+                className="voxel-marker"
+                aria-label={`Selected voxel ${selectedMarker.x}, ${selectedMarker.y}, ${selectedMarker.z}`}
+                style={{
+                  left: `${markerPosition.left}%`,
+                  top: `${markerPosition.top}%`,
                 }}
               />
             ) : null}
@@ -487,7 +565,7 @@ function SliceViewer({
                 Updating mask
               </span>
             ) : null}
-          </>
+          </div>
         ) : (
           <div className={`slice-state slice-state-${status}`} role="status">
             <strong>
@@ -584,12 +662,68 @@ function SegmentationOverlayToggle({
   );
 }
 
-function VoxelProbe({ coordinate, intensity, maskValue }: VoxelProbeProps) {
+function VoxelNavigation({
+  bounds,
+  values,
+  errors,
+  onChange,
+  onSubmit,
+}: VoxelNavigationProps) {
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    onSubmit();
+  }
+
   return (
-    <section className="dataset-panel compact-panel" aria-labelledby="probe-heading">
+    <section className="dataset-panel compact-panel" aria-labelledby="voxel-nav-heading">
+      <div className="section-heading">
+        <p className="panel-kicker">Go to voxel</p>
+        <h2 id="voxel-nav-heading">Coordinate navigation</h2>
+      </div>
+      <form className="voxel-nav-form" onSubmit={handleSubmit} noValidate>
+        {(["x", "y", "z"] as const).map((coordinateAxis) => (
+          <label key={coordinateAxis}>
+            <span>
+              {coordinateAxis.toUpperCase()} <small>0-{bounds[coordinateAxis]} voxels</small>
+            </span>
+            <input
+              type="number"
+              inputMode="numeric"
+              step="1"
+              min="0"
+              max={bounds[coordinateAxis]}
+              value={values[coordinateAxis]}
+              aria-invalid={errors[coordinateAxis] ? "true" : "false"}
+              aria-describedby={
+                errors[coordinateAxis] ? `voxel-${coordinateAxis}-error` : undefined
+              }
+              onChange={(event) => onChange(coordinateAxis, event.target.value)}
+            />
+            {errors[coordinateAxis] ? (
+              <small id={`voxel-${coordinateAxis}-error`} className="inline-error">
+                {errors[coordinateAxis]}
+              </small>
+            ) : null}
+          </label>
+        ))}
+        <button type="submit">Go</button>
+      </form>
+    </section>
+  );
+}
+
+function VoxelProbe({
+  headingId,
+  title,
+  coordinate,
+  intensity,
+  maskValue,
+}: VoxelProbeProps) {
+  return (
+    <section className="dataset-panel compact-panel" aria-labelledby={headingId}>
       <div className="section-heading">
         <p className="panel-kicker">Probe</p>
-        <h2 id="probe-heading">Hovered voxel</h2>
+        <h2 id={headingId}>{title}</h2>
       </div>
       <dl className="metric-list">
         <div>
@@ -693,6 +827,27 @@ function VoxelCounts({ foreground, background }: VoxelCountsProps) {
   );
 }
 
+function StructureHandoff({ job }: { job: AnalysisJob | null }) {
+  return (
+    <section className="dataset-panel compact-panel" aria-labelledby="handoff-heading">
+      <div className="section-heading">
+        <p className="panel-kicker">Handoff</p>
+        <h2 id="handoff-heading">Structure analysis</h2>
+      </div>
+      {job?.status === "complete" ? (
+        <p className="inline-success">
+          Ready for structure analysis. Segmentation and skeleton artifacts are
+          persisted for dataset {job.dataset_id}.
+        </p>
+      ) : (
+        <p className="field-note">
+          Structure analysis handoff becomes available after the backend job completes.
+        </p>
+      )}
+    </section>
+  );
+}
+
 function SaveSegmentationButton({
   disabled,
   threshold,
@@ -764,10 +919,29 @@ export function SegmentationClient({
     message: null,
   });
   const [probe, setProbe] = useState<VoxelProbeProps>({
+    headingId: "hover-probe-heading",
+    title: "Hovered voxel",
     coordinate: { x: 0, y: 0, z: 0 },
     intensity: null,
     maskValue: null,
   });
+  const [selectedProbe, setSelectedProbe] = useState<VoxelProbeProps>({
+    headingId: "selected-probe-heading",
+    title: "Selected voxel",
+    coordinate: { x: 0, y: 0, z: 0 },
+    intensity: null,
+    maskValue: null,
+  });
+  const [selectedCoordinate, setSelectedCoordinate] =
+    useState<VolumeCoordinate | null>(null);
+  const [voxelInput, setVoxelInput] = useState<VoxelCoordinateInput>({
+    x: "0",
+    y: "0",
+    z: "0",
+  });
+  const [voxelInputErrors, setVoxelInputErrors] = useState<
+    Partial<Record<keyof VoxelCoordinateInput, string>>
+  >({});
   const [segmentationSave, setSegmentationSave] = useState<{
     saving: boolean;
     result: SavedSegmentation | null;
@@ -777,18 +951,25 @@ export function SegmentationClient({
     result: null,
     error: null,
   });
+  const [analysisJob, setAnalysisJob] = useState<AnalysisJob | null>(null);
+  const [analysisJobError, setAnalysisJobError] = useState<string | null>(null);
   const lastHoverProbeAt = useRef(0);
   const pendingHoverTimeout = useRef<number | null>(null);
   const latestHoverCoordinate = useRef<VolumeCoordinate | null>(null);
   const latestProbeRequestId = useRef(0);
   const probeAbortController = useRef<AbortController | null>(null);
+  const latestSelectedProbeRequestId = useRef(0);
+  const selectedProbeAbortController = useRef<AbortController | null>(null);
   const maxSliceIndex = getSliceLimit(axis, datasetContext);
+  const volumeBounds = getVolumeBounds(datasetContext);
   const boundedSliceIndex = Math.min(sliceIndex, maxSliceIndex);
-  const preparationStatus = segmentationSave.result
-    ? "Segmentation saved"
+  const preparationStatus = analysisJob
+    ? formatAnalysisStatus(analysisJob.status)
+    : segmentationSave.result
+      ? "Segmentation saved"
     : segmentationSave.saving
       ? "Saving segmentation"
-      : segmentationSave.error
+      : segmentationSave.error || analysisJobError
         ? "Save failed"
         : sliceFetch.status;
   const continueHref =
@@ -805,6 +986,59 @@ export function SegmentationClient({
             : {}),
         }).toString()}`
       : null;
+
+  useEffect(() => {
+    if (!datasetContext.datasetId) {
+      return;
+    }
+
+    const controller = new AbortController();
+
+    fetchLatestAnalysisJob(datasetContext.datasetId, controller.signal)
+      .then((job) => {
+        if (!job) {
+          return;
+        }
+
+        setAnalysisJob(job);
+        setAnalysisJobError(job.status === "failed" ? job.error : null);
+
+        if (job.segmentation) {
+          setThreshold(job.segmentation.threshold);
+          setSegmentationSave({
+            saving: false,
+            result: {
+              status: "saved",
+              dataset_id: job.dataset_id,
+              threshold: job.segmentation.threshold,
+              foreground_voxel_count: job.segmentation.foreground_voxel_count,
+              background_voxel_count: job.segmentation.background_voxel_count,
+              mask_path: job.segmentation.mask_path,
+              slice_preview_path: job.segmentation.slice_preview_path,
+              demo_mode: false,
+            },
+            error: null,
+          });
+        }
+
+        if (job.segmentation) {
+          setViewMode("segmentation");
+        }
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) {
+          return;
+        }
+
+        setAnalysisJobError(
+          error instanceof Error
+            ? error.message
+            : "Unable to load the latest analysis job.",
+        );
+      });
+
+    return () => controller.abort();
+  }, [datasetContext.datasetId]);
 
   useEffect(() => {
     let localObjectUrl: string | null = null;
@@ -937,10 +1171,11 @@ export function SegmentationClient({
       }
 
       probeAbortController.current?.abort();
+      selectedProbeAbortController.current?.abort();
     };
   }, []);
 
-  function runProbe(coordinate: VolumeCoordinate) {
+  function runHoverProbe(coordinate: VolumeCoordinate) {
     setProbe((current) => ({ ...current, coordinate }));
 
     if (!datasetContext.datasetId) {
@@ -959,7 +1194,9 @@ export function SegmentationClient({
           return;
         }
 
-        setProbe({
+        setProbe((current) => ({
+          headingId: current.headingId,
+          title: current.title,
           coordinate: {
             x: nextProbe.x,
             y: nextProbe.y,
@@ -967,14 +1204,69 @@ export function SegmentationClient({
           },
           intensity: nextProbe.intensity,
           maskValue: nextProbe.mask_value,
-        });
+        }));
       })
       .catch(() => {
         if (controller.signal.aborted || requestId !== latestProbeRequestId.current) {
           return;
         }
 
-        setProbe({ coordinate, intensity: null, maskValue: null });
+        setProbe((current) => ({
+          ...current,
+          coordinate,
+          intensity: null,
+          maskValue: null,
+        }));
+      });
+  }
+
+  function runSelectedProbe(
+    coordinate: VolumeCoordinate,
+  ) {
+    setSelectedProbe((current) => ({ ...current, coordinate }));
+
+    if (!datasetContext.datasetId) {
+      return;
+    }
+
+    selectedProbeAbortController.current?.abort();
+    const requestId = latestSelectedProbeRequestId.current + 1;
+    latestSelectedProbeRequestId.current = requestId;
+    const controller = new AbortController();
+    selectedProbeAbortController.current = controller;
+
+    fetchVoxelProbe(datasetContext.datasetId, coordinate, threshold, controller.signal)
+      .then((nextProbe) => {
+        if (requestId !== latestSelectedProbeRequestId.current) {
+          return;
+        }
+
+        setSelectedProbe((current) => ({
+          headingId: current.headingId,
+          title: current.title,
+          coordinate: {
+            x: nextProbe.x,
+            y: nextProbe.y,
+            z: nextProbe.z,
+          },
+          intensity: nextProbe.intensity,
+          maskValue: nextProbe.mask_value,
+        }));
+      })
+      .catch(() => {
+        if (
+          controller.signal.aborted ||
+          requestId !== latestSelectedProbeRequestId.current
+        ) {
+          return;
+        }
+
+        setSelectedProbe((current) => ({
+          ...current,
+          coordinate,
+          intensity: null,
+          maskValue: null,
+        }));
       });
   }
 
@@ -985,7 +1277,14 @@ export function SegmentationClient({
     }
 
     lastHoverProbeAt.current = Date.now();
-    runProbe(coordinate);
+    setSelectedCoordinate(coordinate);
+    setVoxelInput({
+      x: String(coordinate.x),
+      y: String(coordinate.y),
+      z: String(coordinate.z),
+    });
+    setVoxelInputErrors({});
+    runSelectedProbe(coordinate);
   }
 
   function handleProbeHover(coordinate: VolumeCoordinate) {
@@ -996,7 +1295,7 @@ export function SegmentationClient({
 
     if (elapsedMs >= throttleMs) {
       lastHoverProbeAt.current = now;
-      runProbe(coordinate);
+      runHoverProbe(coordinate);
       return;
     }
 
@@ -1009,7 +1308,7 @@ export function SegmentationClient({
       lastHoverProbeAt.current = Date.now();
 
       if (latestHoverCoordinate.current) {
-        runProbe(latestHoverCoordinate.current);
+        runHoverProbe(latestHoverCoordinate.current);
       }
     }, throttleMs - elapsedMs);
   }
@@ -1049,6 +1348,22 @@ export function SegmentationClient({
               : "Unable to save segmentation.",
         });
       });
+  }
+
+  function handleVoxelNavigation() {
+    const validation = validateVoxelCoordinateInput(voxelInput, volumeBounds);
+    setVoxelInputErrors(validation.errors);
+
+    if (!validation.valid) {
+      return;
+    }
+
+    const nextCoordinate = validation.coordinate;
+    setSelectedCoordinate(nextCoordinate);
+    setSliceIndex(getSliceIndexForCoordinate(axis, nextCoordinate));
+    setZoomPercent((current) => Math.max(current, 175));
+    setPanOffset({ x: 0, y: 0 });
+    runSelectedProbe(nextCoordinate);
   }
 
   function resetViewport() {
@@ -1115,7 +1430,14 @@ export function SegmentationClient({
             </div>
             <div>
               <dt>Preparation status</dt>
-              <dd>{preparationStatus}</dd>
+              <dd>
+                {preparationStatus}
+                {analysisJob?.error ? `: ${analysisJob.error}` : ""}
+              </dd>
+            </div>
+            <div>
+              <dt>Job ID</dt>
+              <dd>{analysisJob?.job_id ?? datasetContext.jobId ?? "Not started"}</dd>
             </div>
           </dl>
         </section>
@@ -1159,6 +1481,8 @@ export function SegmentationClient({
               }}
               onProbeClick={handleProbeClick}
               onProbeHover={handleProbeHover}
+              selectedCoordinate={selectedCoordinate}
+              bounds={volumeBounds}
             />
 
             <div className="control-stack">
@@ -1186,9 +1510,34 @@ export function SegmentationClient({
                 onOpacityChange={setOverlayOpacity}
               />
               <VoxelProbe
+                headingId={probe.headingId}
+                title={probe.title}
                 coordinate={probe.coordinate}
                 intensity={probe.intensity}
                 maskValue={probe.maskValue}
+              />
+              <VoxelNavigation
+                bounds={volumeBounds}
+                values={voxelInput}
+                errors={voxelInputErrors}
+                onChange={(coordinateAxis, value) => {
+                  setVoxelInput((current) => ({
+                    ...current,
+                    [coordinateAxis]: value,
+                  }));
+                  setVoxelInputErrors((current) => ({
+                    ...current,
+                    [coordinateAxis]: undefined,
+                  }));
+                }}
+                onSubmit={handleVoxelNavigation}
+              />
+              <VoxelProbe
+                headingId={selectedProbe.headingId}
+                title={selectedProbe.title}
+                coordinate={selectedProbe.coordinate}
+                intensity={selectedProbe.intensity}
+                maskValue={selectedProbe.maskValue}
               />
             </div>
           </div>
@@ -1209,9 +1558,16 @@ export function SegmentationClient({
           </div>
 
           <VoxelCounts
-            foreground={thresholdPreview.foreground}
-            background={thresholdPreview.background}
+            foreground={
+              segmentationSave.result?.foreground_voxel_count ??
+              thresholdPreview.foreground
+            }
+            background={
+              segmentationSave.result?.background_voxel_count ??
+              thresholdPreview.background
+            }
           />
+          <StructureHandoff job={analysisJob} />
           <SaveSegmentationButton
             disabled={!datasetContext.datasetId}
             threshold={threshold}

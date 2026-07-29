@@ -207,8 +207,7 @@ def test_slice_returns_400_for_out_of_range_index() -> None:
     assert "out of range" in response.json()["detail"]
 
 
-@pytest.mark.parametrize("view", ["segmentation", "skeleton"])
-def test_generated_views_return_404_until_generated(view: str) -> None:
+def test_segmentation_view_returns_404_until_generated() -> None:
     intake_response = asyncio.run(
         _post_intake(
             "npyVolume",
@@ -223,10 +222,35 @@ def test_generated_views_return_404_until_generated(view: str) -> None:
     )
     dataset_id = intake_response.json()["dataset_id"]
 
-    response = asyncio.run(_get_slice(dataset_id, "z", 0, view=view))
+    response = asyncio.run(_get_slice(dataset_id, "z", 0, view="segmentation"))
 
     assert response.status_code == 404
-    assert response.json()["detail"] == f"{view} view has not been generated for this dataset."
+    assert response.json()["detail"] == (
+        "segmentation view has not been generated for this dataset."
+    )
+
+
+def test_skeleton_slice_view_is_reserved_for_structure_page() -> None:
+    intake_response = asyncio.run(
+        _post_intake(
+            "npyVolume",
+            [
+                (
+                    "volume.npy",
+                    _npy_bytes(np.arange(24, dtype=np.float32).reshape((2, 3, 4))),
+                    "application/octet-stream",
+                )
+            ],
+        )
+    )
+    dataset_id = intake_response.json()["dataset_id"]
+
+    response = asyncio.run(_get_slice(dataset_id, "z", 0, view="skeleton"))
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == (
+        "skeleton view is reserved for the structure-analysis page."
+    )
 
 
 def test_threshold_preview_returns_mask_png_and_full_volume_counts() -> None:
@@ -325,6 +349,35 @@ def test_voxel_probe_returns_real_intensity_and_mask_value() -> None:
     }
 
 
+def test_voxel_probe_returns_400_for_out_of_range_coordinate() -> None:
+    intake_response = asyncio.run(
+        _post_intake(
+            "npyVolume",
+            [
+                (
+                    "volume.npy",
+                    _npy_bytes(np.arange(24, dtype=np.float32).reshape((2, 3, 4))),
+                    "application/octet-stream",
+                )
+            ],
+        )
+    )
+    dataset_id = intake_response.json()["dataset_id"]
+    transport = httpx.ASGITransport(app=app)
+
+    async def post_probe() -> httpx.Response:
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            return await client.post(
+                f"/v1/datasets/{dataset_id}/voxel-probe",
+                json={"threshold": 10.5, "x": 4, "y": 2, "z": 1},
+            )
+
+    response = asyncio.run(post_probe())
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Voxel coordinate is out of range."
+
+
 def test_segmentation_save_writes_mask_preview_and_returns_counts(_upload_storage_root) -> None:
     volume = np.arange(24, dtype=np.float32).reshape((2, 3, 4))
     intake_response = asyncio.run(
@@ -411,3 +464,132 @@ def test_segmentation_slice_view_returns_png_after_save() -> None:
 
     _assert_png_response(response)
     assert response.headers["x-view"] == "segmentation"
+
+
+def test_analysis_job_runs_tiff_to_segmentation_and_skeleton_pipeline(
+    _upload_storage_root,
+) -> None:
+    volume = np.zeros((5, 7, 7), dtype=np.uint16)
+    volume[:, 3, 1:6] = 100
+    volume[:, 1:6, 3] = 100
+    intake_response = asyncio.run(
+        _post_intake(
+            "ctTiffStack",
+            [("stack.tif", _tiff_bytes(volume), "image/tiff")],
+        )
+    )
+    dataset_id = intake_response.json()["dataset_id"]
+    transport = httpx.ASGITransport(app=app)
+
+    async def post_job() -> httpx.Response:
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            return await client.post(
+                f"/v1/datasets/{dataset_id}/analysis-jobs",
+                json={"project_id": "Pending", "dataset_name": "stack.tif"},
+            )
+
+    response = asyncio.run(post_job())
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "complete"
+    assert payload["project_id"] != "Pending"
+    assert payload["progress"] == ["queued", "segmenting", "skeletonizing", "complete"]
+    assert payload["scale_unit"] == "pixels/voxels"
+    assert payload["segmentation"]["foreground_voxel_count"] > 0
+    assert payload["segmentation"]["background_voxel_count"] > 0
+    assert payload["segmentation"]["dimensions"] == {"x": 7, "y": 7, "z": 5}
+    assert payload["skeletonization"]["connected_components"] >= 1
+    assert payload["skeletonization"]["endpoints"] >= 0
+    assert payload["skeletonization"]["branch_points"] >= 0
+    assert payload["skeletonization"]["bounds"]["unit"] == "pixels/voxels"
+    for relative_path in [
+        "segmentation.npy",
+        "segmentation_summary.json",
+        "skeleton.npy",
+        "skeleton_summary.json",
+    ]:
+        assert (_upload_storage_root / dataset_id / relative_path).is_file()
+
+
+def test_analysis_job_failure_stops_before_skeletonization(_upload_storage_root) -> None:
+    intake_response = asyncio.run(
+        _post_intake(
+            "npyVolume",
+            [
+                (
+                    "uniform.npy",
+                    _npy_bytes(np.ones((3, 4, 5), dtype=np.float32)),
+                    "application/octet-stream",
+                )
+            ],
+        )
+    )
+    dataset_id = intake_response.json()["dataset_id"]
+    transport = httpx.ASGITransport(app=app)
+
+    async def post_job() -> httpx.Response:
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            return await client.post(f"/v1/datasets/{dataset_id}/analysis-jobs", json={})
+
+    response = asyncio.run(post_job())
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "failed"
+    assert payload["segmentation"] is None
+    assert payload["skeletonization"] is None
+    assert "intensity contrast" in payload["error"]
+    assert not (_upload_storage_root / dataset_id / "skeleton.npy").exists()
+
+
+def test_analysis_artifacts_can_be_reopened_after_refresh() -> None:
+    volume = np.zeros((4, 6, 6), dtype=np.float32)
+    volume[:, 2:4, 2:4] = 1.0
+    intake_response = asyncio.run(
+        _post_intake(
+            "npyVolume",
+            [("volume.npy", _npy_bytes(volume), "application/octet-stream")],
+        )
+    )
+    dataset_id = intake_response.json()["dataset_id"]
+    transport = httpx.ASGITransport(app=app)
+
+    async def run_flow() -> tuple[httpx.Response, httpx.Response, httpx.Response]:
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            await client.post(f"/v1/datasets/{dataset_id}/analysis-jobs", json={})
+            latest = await client.get(f"/v1/datasets/{dataset_id}/analysis-jobs/latest")
+            segmentation = await client.get(
+                f"/v1/datasets/{dataset_id}/slices/z/1",
+                params={"view": "segmentation"},
+            )
+            manifest = await client.get(f"/v1/datasets/{dataset_id}/artifacts")
+            skeleton = await client.get(
+                f"/v1/datasets/{dataset_id}/artifacts/skeleton"
+            )
+            skeleton_summary = await client.get(
+                f"/v1/datasets/{dataset_id}/artifacts/skeleton_summary"
+            )
+            return latest, segmentation, manifest, skeleton, skeleton_summary
+
+    (
+        latest_response,
+        segmentation_response,
+        manifest_response,
+        skeleton_response,
+        skeleton_summary_response,
+    ) = asyncio.run(run_flow())
+
+    assert latest_response.status_code == 200
+    assert latest_response.json()["status"] == "complete"
+    _assert_png_response(segmentation_response)
+    assert segmentation_response.headers["x-view"] == "segmentation"
+    assert manifest_response.status_code == 200
+    assert manifest_response.json()["artifacts"]["segmentation_mask"]["path"] == (
+        "segmentation.npy"
+    )
+    assert manifest_response.json()["artifacts"]["skeleton"]["path"] == "skeleton.npy"
+    assert skeleton_response.status_code == 200
+    assert skeleton_response.headers["content-type"] == "application/octet-stream"
+    assert skeleton_summary_response.status_code == 200
+    assert skeleton_summary_response.json()["bounds"]["unit"] == "pixels/voxels"
