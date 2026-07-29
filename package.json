@@ -18,6 +18,7 @@
     "lint:web": "npm run lint --workspace @lattice-inspect/web",
     "typecheck:web": "npm run typecheck --workspace @lattice-inspect/web",
     "test:web": "npm run test --workspace @lattice-inspect/web",
+    "dev:structure": "python app/app.py --dataset missing_struts",
     "dev:api": "cd services/analysis-api && python -m uvicorn app.main:app --reload --port 8000",
     "test:api": "cd services/analysis-api && python -m pytest -q"
   }

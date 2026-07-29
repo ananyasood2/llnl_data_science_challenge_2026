@@ -609,6 +609,55 @@ input[type="file"] {
   margin-top: 0.85rem;
 }
 
+.structure-content {
+  width: min(100% - 3rem, 1480px);
+}
+
+.structure-context {
+  margin-top: 2rem;
+}
+
+.structure-viewer {
+  position: relative;
+  overflow: hidden;
+  min-height: min(78vh, 58rem);
+  margin-top: 0.85rem;
+  background: #f8fbfe;
+  border: 1px solid #dfe9f4;
+  border-radius: 0.5rem;
+}
+
+.structure-iframe {
+  display: block;
+  width: 100%;
+  height: min(78vh, 58rem);
+  min-height: 38rem;
+  border: 0;
+  background: #ffffff;
+}
+
+.viewer-status {
+  position: absolute;
+  top: 1rem;
+  left: 1rem;
+  z-index: 1;
+  max-width: min(34rem, calc(100% - 2rem));
+  padding: 0.7rem 0.85rem;
+  color: #27466f;
+  background: rgb(255 255 255 / 0.94);
+  border: 1px solid #d7e4f2;
+  border-radius: 0.45rem;
+  box-shadow: 0 12px 26px rgb(20 45 79 / 0.1);
+  font-size: 0.86rem;
+  font-weight: 650;
+}
+
+.viewer-status-error {
+  color: #8a300a;
+  background: #fff7ed;
+  border-color: #fed7aa;
+}
+
 .view-mode-panel {
   padding: 0.75rem;
 }
@@ -1216,6 +1265,16 @@ input[type="file"] {
 
   .slice-canvas {
     min-height: 19rem;
+  }
+
+  .structure-content {
+    width: min(100% - 2rem, 1100px);
+  }
+
+  .structure-viewer,
+  .structure-iframe {
+    min-height: 32rem;
+    height: 72vh;
   }
 
   .view-tab.disabled span {

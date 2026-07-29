@@ -12,7 +12,6 @@ import {
 import {
   formatAnalysisStatus,
   formatVoxelSize,
-  hasPositiveNumericValue,
   type AnalysisJobStatus,
 } from "./analysisFormatting";
 import {
@@ -44,6 +43,7 @@ import {
   type PrimaryViewMode,
   type SegmentationComparisonMode,
 } from "./viewModes";
+import { buildStructureAnalysisHref } from "./structureHandoff";
 
 export type DatasetContext = {
   datasetId: string | null;
@@ -58,6 +58,8 @@ export type DatasetContext = {
   voxelSizeMicron: string;
   scaleUnit: "micron" | "voxel";
 };
+
+export type SegmentationQueryParams = Record<string, string>;
 
 type SliceViewerProps = {
   axis: Axis;
@@ -1182,9 +1184,12 @@ function SaveSegmentationButton({
 
 export function SegmentationClient({
   datasetContext,
+  queryParams,
 }: {
   datasetContext: DatasetContext;
+  queryParams: SegmentationQueryParams;
 }) {
+  const searchParams = new URLSearchParams(queryParams);
   const [axis, setAxis] = useState<Axis>("Z");
   const [sliceIndex, setSliceIndex] = useState(128);
   const [viewMode, setViewMode] = useState<PrimaryViewMode>("original");
@@ -1278,20 +1283,11 @@ export function SegmentationClient({
       : segmentationSave.error || analysisJobError
         ? "Save failed"
         : sliceFetch.status;
-  const continueHref =
-    datasetContext.datasetId && segmentationSave.result
-      ? `/skeletonization?${new URLSearchParams({
-          datasetId: datasetContext.datasetId,
-          scaleUnit: datasetContext.scaleUnit,
-          threshold: String(segmentationSave.result.threshold),
-          foregroundVoxelCount: String(segmentationSave.result.foreground_voxel_count),
-          backgroundVoxelCount: String(segmentationSave.result.background_voxel_count),
-          ...(datasetContext.scaleUnit === "micron" &&
-          hasPositiveNumericValue(datasetContext.voxelSizeMicron)
-            ? { voxelSizeMicron: datasetContext.voxelSizeMicron }
-            : {}),
-        }).toString()}`
-      : null;
+  const structureAnalysisReady =
+    analysisJob?.status === "complete" && segmentationSave.result !== null;
+  const continueHref = structureAnalysisReady
+    ? buildStructureAnalysisHref(datasetContext, segmentationSave.result, searchParams)
+    : null;
 
   useEffect(() => {
     if (!datasetContext.datasetId) {

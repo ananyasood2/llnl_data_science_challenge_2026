@@ -1,6 +1,7 @@
 import {
   DatasetContext,
   SegmentationClient,
+  type SegmentationQueryParams,
 } from "./SegmentationClient";
 
 type SegmentationPageProps = {
@@ -19,6 +20,18 @@ function getParam(
   }
 
   return value ?? fallback;
+}
+
+function getQueryParams(params: Record<string, string | string[] | undefined>) {
+  return Object.fromEntries(
+    Object.entries(params).flatMap(([key, value]) => {
+      if (Array.isArray(value)) {
+        return value[0] === undefined ? [] : [[key, value[0]]];
+      }
+
+      return value === undefined ? [] : [[key, value]];
+    }),
+  ) satisfies SegmentationQueryParams;
 }
 
 export default async function SegmentationPage({
@@ -40,5 +53,10 @@ export default async function SegmentationPage({
     scaleUnit,
   };
 
-  return <SegmentationClient datasetContext={datasetContext} />;
+  return (
+    <SegmentationClient
+      datasetContext={datasetContext}
+      queryParams={getQueryParams(params)}
+    />
+  );
 }
