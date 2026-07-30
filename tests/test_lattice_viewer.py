@@ -6,7 +6,6 @@ from app.app import (
     _evidence_details,
     _evidence_focus,
     _inspection_figure,
-    _model_performance,
     _nearest_element,
     _polyline_plane_intersections,
     _record_intersects_axis_limits,
@@ -387,51 +386,6 @@ def test_ct_reading_explains_missing_strut_from_measured_support():
     assert "What the CT scan shows for this strut" in text
     assert "8.0% path support" in text
     assert "below the 15.0% missing-material cutoff" in text
-
-
-def test_whole_model_performance_panel_formats_all_four_percentages():
-    analysis = {
-        "validation": {
-            "overall": {
-                "accuracy": 0.98,
-                "precision": 0.8,
-                "recall": 0.75,
-                "f1": 0.7742,
-                "true_positive": 6,
-                "true_negative": 92,
-                "false_positive": 1,
-                "false_negative": 2,
-                "total": 101,
-            }
-        }
-    }
-
-    panel = _model_performance(analysis)
-    text = _component_text(panel)
-
-    assert "Accuracy" in text and "98.0%" in text
-    assert "Precision" in text and "80.0%" in text
-    assert "Recall" in text and "75.0%" in text
-    assert "F1" in text and "77.4%" in text
-    assert "101 validated elements" in text
-    assert "Missing / disconnected detection performance" in text
-    assert "Both missing and broken / disconnected detector labels" in text
-
-
-def test_model_performance_panel_calculates_live_3d_defect_percentages():
-    analysis = _analysis_fixture()
-
-    panel = _model_performance(analysis)
-    text = _component_text(panel)
-
-    assert "LIVE 3D MODEL" in text
-    assert "Missing / disconnected percentage" in text
-    assert "Struts 40.00% 2 of 5" in text
-    assert "Nodes 50.00% 1 of 2" in text
-    assert "Combined 42.86% 3 of 7" in text
-    assert "1 missing + 1 disconnected struts" in text
-    assert "1 missing + 0 disconnected nodes" in text
-    assert "CAD validation unavailable" in text
 
 
 def test_strut_crossing_axis_limit_is_still_in_the_displayed_region():

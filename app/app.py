@@ -1223,165 +1223,6 @@ def _ct_reading_narrative(
     )
 
 
-def _model_performance(analysis: dict[str, Any]) -> list[Any]:
-    """Build live model prevalence and aggregate CAD-validation metric cards."""
-
-    struts = analysis.get("struts", [])
-    nodes = analysis.get("nodes", [])
-    positive_statuses = {"missing", "disconnected"}
-
-    def live_counts(records: list[dict[str, Any]]) -> dict[str, int | float]:
-        total = len(records)
-        missing = sum(record.get("status") == "missing" for record in records)
-        disconnected = sum(
-            record.get("status") == "disconnected" for record in records
-        )
-        positive = sum(
-            record.get("status") in positive_statuses for record in records
-        )
-        return {
-            "total": total,
-            "missing": missing,
-            "disconnected": disconnected,
-            "positive": positive,
-            "percentage": positive / total if total else 0.0,
-        }
-
-    strut_live = live_counts(struts)
-    node_live = live_counts(nodes)
-    combined_total = int(strut_live["total"]) + int(node_live["total"])
-    combined_positive = int(strut_live["positive"]) + int(node_live["positive"])
-    live_panel: list[Any] = []
-    if combined_total:
-        live_metrics = (
-            (
-                "Struts",
-                float(strut_live["percentage"]),
-                f"{int(strut_live['positive']):,} of {int(strut_live['total']):,}",
-            ),
-            (
-                "Nodes",
-                float(node_live["percentage"]),
-                f"{int(node_live['positive']):,} of {int(node_live['total']):,}",
-            ),
-            (
-                "Combined",
-                combined_positive / combined_total,
-                f"{combined_positive:,} of {combined_total:,}",
-            ),
-        )
-        live_panel = [
-            html.Div(
-                [
-                    html.Div("LIVE 3D MODEL", className="eyebrow"),
-                    html.H3("Missing / disconnected percentage"),
-                    html.P(
-                        "Recalculated from all registered elements at the active "
-                        "segmentation threshold. Display filters do not change these "
-                        "whole-model percentages."
-                    ),
-                ],
-                className="performance-copy",
-            ),
-            html.Div(
-                [
-                    html.Div(
-                        [
-                            html.Span(label, className="metric-label"),
-                            html.Strong(
-                                f"{100 * percentage:.2f}%",
-                                className="metric-value",
-                            ),
-                            html.Span(detail, className="metric-help"),
-                        ],
-                        className=(
-                            "metric-card metric-live-combined"
-                            if label == "Combined"
-                            else "metric-card"
-                        ),
-                    )
-                    for label, percentage, detail in live_metrics
-                ],
-                className="metric-grid metric-grid-live",
-            ),
-            html.P(
-                f"{int(strut_live['missing']):,} missing + "
-                f"{int(strut_live['disconnected']):,} disconnected struts · "
-                f"{int(node_live['missing']):,} missing + "
-                f"{int(node_live['disconnected']):,} disconnected nodes",
-                className="performance-footnote",
-            ),
-        ]
-
-    validation = analysis.get("validation")
-    overall = validation.get("overall") if validation else None
-    if not overall:
-        return live_panel + [
-            html.Div(
-                [
-                    html.Div("CAD VALIDATION", className="eyebrow"),
-                    html.H3("CAD validation unavailable"),
-                    html.P(
-                        "Accuracy, precision, recall, and F1 require a paired "
-                        "complete/defect CAD ground-truth set."
-                    ),
-                ],
-                className="performance-copy",
-            )
-        ]
-
-    metric_help = {
-        "accuracy": "(TP + TN) / (TP + TN + FP + FN)",
-        "precision": "Flagged missing/disconnected elements matching CAD removals",
-        "recall": "CAD-removed elements flagged missing or disconnected",
-        "f1": "Balance of precision and recall",
-    }
-    return live_panel + [
-        html.Div(
-            [
-                html.Div("WHOLE-MODEL VALIDATION", className="eyebrow"),
-                html.H3("Missing / disconnected detection performance"),
-                html.P(
-                    "Micro-averaged across every validated strut and node using "
-                    "complete-versus-defect CAD removals as binary ground truth. "
-                    "Both missing and broken / disconnected detector labels count "
-                    "as positive predictions. The CAD pair does not independently "
-                    "identify scan-induced disconnections, so unmatched disconnected "
-                    "predictions count as false positives. Positive elements are "
-                    "rare, so interpret accuracy together with precision, recall, "
-                    "and F1."
-                ),
-            ],
-            className="performance-copy",
-        ),
-        html.Div(
-            [
-                html.Div(
-                    [
-                        html.Span(name.title(), className="metric-label"),
-                        html.Strong(
-                            f"{100 * float(overall[name]):.1f}%",
-                            className="metric-value",
-                        ),
-                        html.Span(metric_help[name], className="metric-help"),
-                    ],
-                    className=f"metric-card metric-{name}",
-                )
-                for name in ("accuracy", "precision", "recall", "f1")
-            ],
-            className="metric-grid",
-        ),
-        html.P(
-            f"{int(overall['true_positive']):,} true positives · "
-            f"{int(overall['true_negative']):,} true negatives · "
-            f"{int(overall['false_positive']):,} false positives · "
-            f"{int(overall['false_negative']):,} false negatives · "
-            f"{int(overall['total']):,} validated elements",
-            className="performance-footnote",
-        ),
-    ]
-
-
 def _evidence_details(
     analysis: dict[str, Any],
     selected: tuple[str, dict[str, Any]] | None,
@@ -1814,20 +1655,6 @@ def _visible_summary(
             ),
         ]
     )
-    validation = analysis.get("validation")
-    if validation:
-        strut_metrics = validation["struts"]
-        summary.extend(
-            [
-                html.Span("•", className="summary-dot"),
-                html.Span(
-                    f"CAD validation: {strut_metrics['true_positive']}/"
-                    f"{strut_metrics['expected']} intentional struts matched · "
-                    f"F1 {100 * float(strut_metrics['f1']):.1f}%",
-                    className="validation-summary",
-                ),
-            ]
-        )
     return summary
 
 
@@ -2223,10 +2050,6 @@ def create_app(default_dataset: str = "missing_struts") -> Dash:
                         id="lookup-feedback",
                         className="lookup-feedback",
                     ),
-                    html.Div(
-                        id="model-performance",
-                        className="model-performance",
-                    ),
                     dcc.Loading(
                         type="circle",
                         color="#55d6be",
@@ -2324,7 +2147,6 @@ def create_app(default_dataset: str = "missing_struts") -> Dash:
         Output("visible-summary", "children"),
         Output("selection-details", "children"),
         Output("threshold-readout", "children"),
-        Output("model-performance", "children"),
         Input("status-filters", "value"),
         Input("element-filters", "value"),
         Input("show-ct", "value"),
@@ -2385,7 +2207,6 @@ def create_app(default_dataset: str = "missing_struts") -> Dash:
                 ),
                 _selection_details(selected),
                 f"Threshold {active_threshold:g} · {source_label}",
-                _model_performance(analysis),
             )
         except Exception as exc:
             message = f"Could not load registered comparison: {exc}"
@@ -2394,7 +2215,6 @@ def create_app(default_dataset: str = "missing_struts") -> Dash:
                 html.Span(message, className="error-message"),
                 [html.Span(message, className="error-message")],
                 "Threshold unavailable",
-                _model_performance({}),
             )
 
     @app.callback(

@@ -1,0 +1,134 @@
+<div id="defect-category-counts">
+  <svg viewBox="0 0 736 470" width="100%" role="img" aria-labelledby="defect-count-title defect-count-desc">
+    <title id="defect-count-title">Counts of lattice elements by detector classification</title>
+    <desc id="defect-count-desc">Combined strut and node counts are missing 101, disconnected 24, thick 1,853, thin 0, uncertain 547, and healthy 26,149. The horizontal axis uses a symmetric logarithmic scale.</desc>
+
+    <g class="grid">
+      <line x1="180" y1="32" x2="180" y2="407"></line>
+      <line x1="285" y1="32" x2="285" y2="407"></line>
+      <line x1="381" y1="32" x2="381" y2="407"></line>
+      <line x1="482" y1="32" x2="482" y2="407"></line>
+      <line x1="582" y1="32" x2="582" y2="407"></line>
+      <line x1="630" y1="32" x2="630" y2="407"></line>
+    </g>
+
+    <g class="bars">
+      <text class="category" x="165" y="68">Missing</text>
+      <rect class="bar missing" x="180" y="45" width="202" height="32" rx="4"></rect>
+      <text class="value" x="392" y="68">101</text>
+
+      <text class="category" x="165" y="128">Disconnected</text>
+      <rect class="bar disconnected" x="180" y="105" width="141" height="32" rx="4"></rect>
+      <text class="value" x="331" y="128">24</text>
+
+      <text class="category" x="165" y="188">Thick</text>
+      <rect class="bar thick" x="180" y="165" width="328" height="32" rx="4"></rect>
+      <text class="value" x="518" y="188">1,853</text>
+
+      <text class="category" x="165" y="248">Thin</text>
+      <circle class="zero thin" cx="180" cy="237" r="4"></circle>
+      <text class="value" x="194" y="248">0</text>
+
+      <text class="category" x="165" y="308">Uncertain</text>
+      <rect class="bar uncertain" x="180" y="285" width="275" height="32" rx="4"></rect>
+      <text class="value" x="465" y="308">547</text>
+
+      <text class="category" x="165" y="368">Healthy</text>
+      <rect class="bar healthy" x="180" y="345" width="444" height="32" rx="4"></rect>
+      <text class="value" x="634" y="368">26,149</text>
+    </g>
+
+    <g class="axis">
+      <line x1="180" y1="407" x2="630" y2="407"></line>
+      <text x="180" y="430">0</text>
+      <text x="285" y="430">10</text>
+      <text x="381" y="430">100</text>
+      <text x="482" y="430">1k</text>
+      <text x="582" y="430">10k</text>
+      <text x="630" y="430">30k</text>
+      <text class="axis-label" x="405" y="458">Element count · symlog scale</text>
+    </g>
+  </svg>
+</div>
+
+<style>
+  #defect-category-counts {
+    width: 100%;
+    color: var(--foreground);
+    background: transparent;
+  }
+
+  #defect-category-counts svg {
+    display: block;
+    width: 100%;
+    height: auto;
+    overflow: visible;
+  }
+
+  #defect-category-counts text {
+    fill: var(--foreground);
+    font-family: inherit;
+    font-size: var(--font-size-base);
+    font-weight: 400;
+  }
+
+  #defect-category-counts .category {
+    text-anchor: end;
+    font-weight: 500;
+  }
+
+  #defect-category-counts .value {
+    dominant-baseline: middle;
+    font-variant-numeric: tabular-nums;
+    font-weight: 500;
+  }
+
+  #defect-category-counts .grid line {
+    stroke: var(--border);
+    stroke-width: 1;
+  }
+
+  #defect-category-counts .axis line {
+    stroke: var(--muted-foreground);
+    stroke-width: 1;
+  }
+
+  #defect-category-counts .axis text {
+    fill: var(--muted-foreground);
+    text-anchor: middle;
+  }
+
+  #defect-category-counts .axis-label {
+    font-weight: 500;
+  }
+
+  #defect-category-counts .missing {
+    fill: var(--viz-series-1);
+  }
+
+  #defect-category-counts .disconnected {
+    fill: var(--viz-series-2);
+  }
+
+  #defect-category-counts .thick {
+    fill: var(--viz-series-3);
+  }
+
+  #defect-category-counts .thin {
+    fill: var(--viz-series-4);
+  }
+
+  #defect-category-counts .uncertain {
+    fill: var(--viz-series-5);
+  }
+
+  #defect-category-counts .healthy {
+    fill: var(--viz-series-6);
+  }
+
+  @media (max-width: 520px) {
+    #defect-category-counts text {
+      font-size: calc(var(--font-size-base) * 0.9);
+    }
+  }
+</style>

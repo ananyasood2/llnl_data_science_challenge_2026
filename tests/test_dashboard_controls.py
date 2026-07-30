@@ -58,7 +58,7 @@ def test_display_axis_remapping_control_is_not_in_the_dashboard() -> None:
 
     assert "axis-order" not in identifiers
     assert {"x-axis-max", "y-axis-max", "z-axis-max"} <= identifiers
-    assert "model-performance" in identifiers
+    assert "model-performance" not in identifiers
 
 
 def test_connectivity_failures_share_one_dashboard_filter() -> None:
