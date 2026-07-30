@@ -1,0 +1,4 @@
+interface:
+  display_name: "Thickness Analysis"
+  short_description: "Analyze registered strut thickness evidence"
+  default_prompt: "Use $thickness-analysis to explain the registered strut thickness distribution."

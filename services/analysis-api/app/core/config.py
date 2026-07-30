@@ -9,16 +9,29 @@ from tempfile import gettempdir
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
+
+
 class Settings(BaseSettings):
     """Validated runtime configuration for local and Cloud Run environments."""
 
     app_env: str = "development"
-    cors_allowed_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
+    cors_allowed_origins: str = (
+        "http://localhost:3000,http://127.0.0.1:3000,"
+        "http://localhost:3001,http://127.0.0.1:3001"
+    )
     gcp_project_id: str | None = None
     gcs_bucket_name: str | None = None
     demo_mode: bool = True
     log_level: str = "INFO"
     upload_storage_root: Path = Path(gettempdir()) / "lattice-ct-inspection" / "uploads"
+    builtin_data_root: Path = REPOSITORY_ROOT / "data"
+    measurement_artifact_root: Path = (
+        Path(gettempdir()) / "lattice-ct-inspection" / "measurement-artifacts"
+    )
+    openai_api_key: str | None = None
+    measurement_copilot_model: str = "gpt-5.6-terra"
+    measurement_copilot_reasoning_effort: str = "medium"
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -35,7 +48,12 @@ class Settings(BaseSettings):
             for origin in self.cors_allowed_origins.split(",")
             if origin.strip()
         )
-        return origins or ("http://localhost:3000", "http://127.0.0.1:3000")
+        return origins or (
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+            "http://localhost:3001",
+            "http://127.0.0.1:3001",
+        )
 
 
 @lru_cache

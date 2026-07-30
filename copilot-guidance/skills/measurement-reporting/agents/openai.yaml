@@ -1,0 +1,4 @@
+interface:
+  display_name: "Measurement Reporting"
+  short_description: "Create traceable lattice measurement reports"
+  default_prompt: "Use $measurement-reporting to create a traceable report from deterministic measurement tools."

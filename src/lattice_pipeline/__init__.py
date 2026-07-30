@@ -27,3 +27,4 @@ __all__ = [
     "resolve_alignment",
     "voxel_zyx_to_physical_xyz",
 ]
+"""Shared deterministic lattice CT analysis package."""

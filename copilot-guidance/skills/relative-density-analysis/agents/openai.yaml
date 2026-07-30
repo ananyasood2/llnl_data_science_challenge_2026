@@ -1,0 +1,4 @@
+interface:
+  display_name: "Relative Density Analysis"
+  short_description: "Analyze segmented lattice relative density"
+  default_prompt: "Use $relative-density-analysis to compare segmented relative density with its design target."

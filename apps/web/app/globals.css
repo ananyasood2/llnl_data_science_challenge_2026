@@ -804,29 +804,707 @@ input[type="file"] {
 }
 
 .measurement-content {
-  width: min(1100px, calc(100% - 4rem));
+  width: min(1320px, calc(100% - 4rem));
 }
 
 .measurement-context {
   margin-top: 2rem;
 }
 
-.measurement-grid {
+.measurement-title-row,
+.measurement-section-header,
+.thickness-map-toolbar,
+.density-primary-value,
+.measurement-copilot-placeholder {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.measurement-title-row > .measurement-status {
+  margin-top: 0.7rem;
+}
+
+.measurement-meta {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.measurement-meta dd {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.measurement-dashboard {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.85rem;
   margin-top: 0.85rem;
 }
 
-.measurement-card p {
+.measurement-section {
+  padding: clamp(1rem, 2vw, 1.35rem);
+}
+
+.measurement-section-header {
+  align-items: center;
+}
+
+.measurement-section-header h2,
+.measurement-copilot-placeholder h2 {
+  margin: 0.3rem 0 0;
+  font-size: clamp(1.15rem, 2vw, 1.55rem);
+  letter-spacing: -0.025em;
+}
+
+.measurement-section-copy,
+.measurement-loading p,
+.measurement-error p,
+.measurement-copilot-placeholder p {
   color: var(--muted);
-  font-size: 0.94rem;
-  font-weight: 550;
+  font-size: 0.86rem;
   line-height: 1.55;
 }
 
-.measurement-notice {
+.measurement-status {
+  display: inline-flex;
+  align-items: center;
+  min-width: 5.2rem;
+  justify-content: center;
+  padding: 0.38rem 0.72rem;
+  border: 1px solid currentcolor;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 820;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.status-pass {
+  color: #067454;
+  background: #e7f8f1;
+}
+
+.status-warn {
+  color: #9a5a00;
+  background: #fff7df;
+}
+
+.status-fail {
+  color: #b42318;
+  background: #fff0ef;
+}
+
+.measurement-loading,
+.measurement-error {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  justify-content: space-between;
   margin-top: 0.85rem;
+}
+
+.measurement-loading strong,
+.measurement-error strong {
+  display: block;
+  margin-bottom: 0.25rem;
+}
+
+.measurement-loading p,
+.measurement-error p {
+  margin: 0;
+}
+
+.measurement-spinner {
+  width: 1.55rem;
+  height: 1.55rem;
+  flex: 0 0 auto;
+  border: 3px solid #d9e5f3;
+  border-top-color: var(--blue);
+  border-radius: 999px;
+  animation: measurement-spin 0.8s linear infinite;
+}
+
+@keyframes measurement-spin {
+  to { transform: rotate(360deg); }
+}
+
+.measurement-cutoff-form {
+  display: grid;
+  grid-template-columns: minmax(12rem, 16rem) auto;
+  gap: 0.65rem;
+  align-items: end;
+  margin: 1rem 0;
+}
+
+.measurement-cutoff-form label {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.measurement-cutoff-form label > span:first-child {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 730;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.measurement-chart-wrap {
+  padding: 0.75rem 0.75rem 0.4rem;
+  overflow-x: auto;
+  background: #f8fbfe;
+  border: 1px solid #dfe8f2;
+  border-radius: 0.8rem;
+}
+
+.measurement-histogram-chart {
+  display: block;
+  width: 100%;
+  min-width: 40rem;
+  height: auto;
+}
+
+.chart-axis {
+  stroke: #9aabc0;
+  stroke-width: 1;
+}
+
+.histogram-bar {
+  fill: #268ea3;
+  opacity: 0.8;
+  transition: opacity 100ms ease;
+}
+
+.histogram-bar:hover {
+  opacity: 1;
+}
+
+.histogram-marker line {
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+}
+
+.histogram-marker text,
+.chart-label {
+  fill: #64748b;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.marker-critical line { stroke: #dc2626; }
+.marker-critical text { fill: #b42318; }
+.marker-target line { stroke: #0f8b68; }
+.marker-target text { fill: #067454; }
+.marker-user line { stroke: #7c3aed; }
+.marker-user text { fill: #6d28d9; }
+
+.histogram-overflow-note {
+  margin: 0.25rem 0 0;
+  color: #805100;
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.measurement-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.65rem;
+  margin-top: 0.75rem;
+}
+
+.measurement-metric-card {
+  display: grid;
+  gap: 0.28rem;
+  padding: 0.8rem;
+  background: #f8fbfe;
+  border: 1px solid #e1eaf3;
+  border-radius: 0.7rem;
+}
+
+.measurement-metric-card span,
+.density-volume-grid dt,
+.measurement-provenance-grid dt {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 760;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.measurement-metric-card strong {
+  font-size: clamp(1.05rem, 2vw, 1.35rem);
+}
+
+.measurement-metric-card small {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.thickness-map-shell {
+  width: 100%;
+  overflow: hidden;
+  margin-top: 0.85rem;
+  background: #08131f;
+  border: 1px solid #1d3650;
+  border-radius: 0.8rem;
+}
+
+.thickness-map-toolbar {
+  align-items: center;
+  padding: 0.65rem 0.75rem;
+  color: #d8e7f6;
+  background: #102235;
+  border-bottom: 1px solid #1d3650;
+}
+
+.thickness-map-shell canvas {
+  display: block;
+  max-width: 100%;
+}
+
+.measurement-segmented-control {
+  display: inline-flex;
+  padding: 0.2rem;
+  background: #07101b;
+  border: 1px solid #294760;
+  border-radius: 0.55rem;
+}
+
+.measurement-segmented-control button {
+  min-height: 1.9rem;
+  padding: 0.35rem 0.65rem;
+  color: #a9bed1;
+  background: transparent;
+  border: 0;
+  border-radius: 0.4rem;
+}
+
+.measurement-segmented-control button.active {
+  color: #ffffff;
+  background: #2563eb;
+}
+
+.measurement-zoom-control {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+  color: #b9cadd;
+  font-size: 0.75rem;
+  font-weight: 730;
+}
+
+.measurement-zoom-control input {
+  width: 8rem;
+  min-height: auto;
+  padding: 0;
+}
+
+.thickness-map-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem 1rem;
+  padding: 0.65rem 0.8rem 0.8rem;
+  color: #c3d3e3;
+  font-size: 0.72rem;
+}
+
+.thickness-map-legend span {
+  display: inline-flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.thickness-map-legend i {
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 0.2rem;
+}
+
+.thickness-critical { background: #dc2626; }
+.thickness-below-target { background: #f59e0b; }
+.thickness-nominal { background: #0f9f75; }
+.thickness-high { background: #7c3aed; }
+.thickness-unmeasured { background: #94a3b8; }
+.thickness-highlight { background: #ffffff; border: 1px solid #64748b; }
+
+.measurement-density-layout {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.85rem;
+}
+
+.density-gauge {
+  position: relative;
+  height: 1.1rem;
+  margin-top: 2rem;
+  overflow: visible;
+  background: linear-gradient(90deg, #f0b7b2 0 40%, #f5d28b 40% 45%, #8ee8c8 45% 55%, #f5d28b 55% 60%, #f0b7b2 60% 100%);
+  border-radius: 999px;
+}
+
+.density-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--density-position);
+  background: rgb(37 99 235 / 36%);
+  border-right: 3px solid #1d4ed8;
+  border-radius: 999px 0 0 999px;
+}
+
+.density-target {
+  position: absolute;
+  top: -0.35rem;
+  bottom: -0.35rem;
+  left: var(--target-position);
+  width: 2px;
+  background: #07101b;
+}
+
+.density-primary-value {
+  align-items: baseline;
+  justify-content: flex-start;
+  margin-top: 0.75rem;
+}
+
+.density-primary-value strong {
+  font-size: 2rem;
+  letter-spacing: -0.04em;
+}
+
+.density-primary-value span {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.density-volume-grid,
+.measurement-provenance-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.6rem;
+  margin: 1rem 0 0;
+}
+
+.density-volume-grid div,
+.measurement-provenance-grid div {
+  min-width: 0;
+  padding: 0.75rem;
+  background: #f8fbfe;
+  border: 1px solid #e1eaf3;
+  border-radius: 0.65rem;
+}
+
+.density-volume-grid dd,
+.measurement-provenance-grid dd {
+  margin: 0.3rem 0 0;
+  overflow-wrap: anywhere;
+  font-size: 0.86rem;
+  font-weight: 720;
+}
+
+.measurement-secondary-button {
+  color: #27466f;
+  background: #eff5ff;
+  border-color: #cbdcfa;
+}
+
+.measurement-table-wrap {
+  max-height: 23rem;
+  overflow: auto;
+  border: 1px solid #e1eaf3;
+  border-radius: 0.7rem;
+}
+
+.measurement-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.measurement-table th,
+.measurement-table td {
+  padding: 0.62rem 0.7rem;
+  text-align: left;
+  border-bottom: 1px solid #e8eef5;
+}
+
+.measurement-table th {
+  position: sticky;
+  top: 0;
+  color: #56677d;
+  background: #f5f8fc;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+}
+
+.measurement-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.measurement-warning-list {
+  display: grid;
+  gap: 0.55rem;
+  padding-left: 1.2rem;
+  color: #7c4a02;
+  font-size: 0.84rem;
+  line-height: 1.45;
+}
+
+.measurement-copilot-placeholder {
+  align-items: center;
+  color: #dceafb;
+  background: linear-gradient(145deg, #0b1730, #163454);
+  border-color: #294b6c;
+}
+
+.measurement-copilot-placeholder p {
+  max-width: 58rem;
+  margin: 0.6rem 0 0;
+  color: #aebfd2;
+}
+
+.measurement-copilot-placeholder .state {
+  flex: 0 0 auto;
+  color: #7dd3fc;
+  background: rgb(125 211 252 / 10%);
+}
+
+.measurement-copilot {
+  color: #dceafb;
+  background: linear-gradient(145deg, #0b1730, #102d4b);
+  border-color: #294b6c;
+}
+
+.measurement-copilot .measurement-section-copy {
+  max-width: 64rem;
+  color: #aec0d4;
+}
+
+.measurement-copilot .state-ready {
+  color: #8ee8c8;
+  background: rgb(15 139 104 / 15%);
+}
+
+.copilot-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.copilot-suggestions button {
+  min-height: 2rem;
+  padding: 0.45rem 0.7rem;
+  color: #cce7ff;
+  background: rgb(51 112 166 / 18%);
+  border-color: #315a7e;
+  font-size: 0.74rem;
+  text-align: left;
+}
+
+.copilot-suggestions button:hover:not(:disabled) {
+  color: #ffffff;
+  border-color: #7dd3fc;
+  background: rgb(51 112 166 / 34%);
+}
+
+.copilot-thread {
+  display: grid;
+  gap: 0.7rem;
+  max-height: 39rem;
+  margin-top: 1rem;
+  padding: 0.8rem;
+  overflow-y: auto;
+  background: rgb(4 13 25 / 55%);
+  border: 1px solid #25435f;
+  border-radius: 0.75rem;
+}
+
+.copilot-empty-state {
+  display: grid;
+  gap: 0.3rem;
+  padding: 1.2rem;
+  color: #a9bdd1;
+  text-align: center;
+}
+
+.copilot-empty-state strong {
+  color: #eaf4ff;
+}
+
+.copilot-empty-state span {
+  font-size: 0.82rem;
+}
+
+.copilot-message {
+  width: min(90%, 58rem);
+  padding: 0.8rem 0.9rem;
+  border: 1px solid #2b4d6d;
+  border-radius: 0.7rem;
+}
+
+.copilot-message-user {
+  justify-self: end;
+  color: #f0f7ff;
+  background: #214e79;
+  border-color: #3c6e9c;
+}
+
+.copilot-message-assistant {
+  justify-self: start;
+  background: #10283f;
+}
+
+.copilot-role {
+  color: #7dd3fc;
+  font-size: 0.67rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.copilot-message p {
+  margin: 0.45rem 0 0;
+  font-size: 0.86rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.copilot-run-details {
+  display: grid;
+  gap: 0.55rem;
+  margin-top: 0.75rem;
+  padding-top: 0.7rem;
+  border-top: 1px solid #294b68;
+}
+
+.copilot-run-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.8rem;
+  color: #9eb5c9;
+  font-size: 0.67rem;
+}
+
+.copilot-run-details summary {
+  color: #bee0fb;
+  cursor: pointer;
+  font-size: 0.75rem;
+  font-weight: 720;
+}
+
+.copilot-tool-trace {
+  display: grid;
+  gap: 0.4rem;
+  padding: 0;
+  margin: 0.6rem 0 0;
+  list-style: none;
+}
+
+.copilot-tool-trace li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.8rem;
+  justify-content: space-between;
+  padding: 0.5rem 0.6rem;
+  color: #c8d9e9;
+  background: rgb(255 255 255 / 4%);
+  border: 1px solid #29445e;
+  border-radius: 0.5rem;
+  font-size: 0.7rem;
+}
+
+.copilot-tool-trace li > span {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.6rem;
+}
+
+.copilot-tool-trace code {
+  color: #8ee8c8;
+}
+
+.copilot-tool-trace small {
+  color: #829db5;
+}
+
+.copilot-artifact-link {
+  width: fit-content;
+  color: #7dd3fc;
+  font-size: 0.78rem;
+  font-weight: 720;
+}
+
+.copilot-warning {
+  color: #f8d48d;
+  font-size: 0.72rem !important;
+}
+
+.copilot-running {
+  display: flex;
+  gap: 0.7rem;
+  align-items: center;
+  padding: 0.7rem;
+  color: #b9cee1;
+  font-size: 0.78rem;
+}
+
+.copilot-running .measurement-spinner {
+  width: 1.1rem;
+  height: 1.1rem;
+  border-color: #31516f;
+  border-top-color: #7dd3fc;
+}
+
+.copilot-composer {
+  display: grid;
+  gap: 0.45rem;
+  margin-top: 0.8rem;
+}
+
+.copilot-composer > label {
+  color: #9fb6ca;
+  font-size: 0.68rem;
+  font-weight: 760;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.copilot-composer > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.55rem;
+  align-items: end;
+}
+
+.copilot-composer textarea {
+  width: 100%;
+  min-height: 4.8rem;
+  padding: 0.7rem;
+  resize: vertical;
+  color: #edf7ff;
+  background: #071522;
+  border: 1px solid #31516f;
+  border-radius: 0.55rem;
+  font: inherit;
+  font-size: 0.86rem;
+}
+
+.copilot-composer textarea:focus {
+  border-color: #7dd3fc;
+  outline: 2px solid rgb(125 211 252 / 18%);
+}
+
+@media (max-width: 1050px) {
+  .measurement-metric-grid,
+  .measurement-meta {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .measurement-density-layout {
+    grid-template-columns: 1fr;
+  }
 }
 
 .structure-context {
@@ -1560,8 +2238,40 @@ input[type="file"] {
   .segmentation-grid,
   .metric-grid,
   .slice-toolbar,
-  .measurement-grid {
+  .measurement-grid,
+  .measurement-meta,
+  .measurement-metric-grid,
+  .density-volume-grid,
+  .measurement-provenance-grid {
     grid-template-columns: 1fr;
+  }
+
+  .measurement-content {
+    width: min(100% - 2rem, 1100px);
+  }
+
+  .measurement-title-row,
+  .measurement-section-header,
+  .thickness-map-toolbar,
+  .measurement-copilot-placeholder {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .copilot-composer > div {
+    grid-template-columns: 1fr;
+  }
+
+  .copilot-message {
+    width: 100%;
+  }
+
+  .measurement-cutoff-form {
+    grid-template-columns: 1fr;
+  }
+
+  .measurement-histogram-chart {
+    min-width: 36rem;
   }
 
   .project-actions {

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import test from "node:test";
 import ts from "typescript";
 
@@ -18,7 +19,7 @@ async function importFormattingModule() {
   const outPath = join(outDir, `analysisFormatting-${Date.now()}.mjs`);
   await mkdir(outDir, { recursive: true });
   await writeFile(outPath, transpiled);
-  return import(outPath);
+  return import(pathToFileURL(outPath).href);
 }
 
 test("unknown voxel scale remains labeled pixels and voxels", async () => {

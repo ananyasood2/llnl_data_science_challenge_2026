@@ -94,6 +94,7 @@ The frontend is available at `http://localhost:3000`.
 ```bash
 python -m venv .venv
 source .venv/bin/activate
+python -m pip install -e .
 python -m pip install -r services/analysis-api/requirements-dev.txt
 cp services/analysis-api/.env.example services/analysis-api/.env
 npm run dev:api
@@ -101,6 +102,64 @@ npm run dev:api
 
 The API health endpoint is `http://localhost:8000/health`; local OpenAPI docs
 are at `http://localhost:8000/docs`.
+
+### Measurement page and copilot
+
+The **Measurements** sidebar page combines deterministic registered-lattice
+measurements with a traceable agent workflow. It includes:
+
+- thickness histogram with 350 µm target, 300 µm critical line, and user cutoff
+- mean, median, minimum, maximum, and percent-below statistics
+- XY/XZ/YZ color-coded registered strut map and outlier highlighting
+- segmented material volume, registered enclosing ROI volume, and relative density
+- comparison with the 10% target using an explicitly provisional demo policy
+- Measurement Copilot with Thickness Analysis and Relative Density specialist tools
+- tool/run/revision trace, viewer actions, and derivative report downloads
+
+Run it in two PowerShell terminals from the repository root:
+
+```powershell
+# Terminal 1
+conda activate dssi_env
+python -m pip install -e .
+python -m pip install -r services/analysis-api/requirements-dev.txt
+npm run dev:api
+
+# Terminal 2
+npm run dev:web
+```
+
+Open <http://localhost:3000/measurements>. The built-in registered
+`missing_struts` analysis works without an LLM key. In that mode, the page uses
+the deterministic local orchestrator and still records the same tool lineage.
+
+To enable OpenAI Responses API tool selection, add the key only to
+`services/analysis-api/.env`:
+
+```dotenv
+OPENAI_API_KEY=your-server-side-key
+MEASUREMENT_COPILOT_MODEL=gpt-5.6-terra
+MEASUREMENT_COPILOT_REASONING_EFFORT=medium
+```
+
+Never place the key in `apps/web/.env.local` or any `NEXT_PUBLIC_*` value.
+
+The measurement MCP server can also run independently:
+
+```powershell
+npm run dev:measurement-mcp
+```
+
+For Codex CLI, configure its command as the absolute path to the active Python
+environment and its single argument as the absolute path to
+`services/analysis-api/measurement_mcp_server.py`. Restart Codex after changing
+MCP configuration. The exposed tools accept context IDs rather than arbitrary
+filesystem paths.
+
+The scientific boundary is intentional: Python computes every value; MCP
+provides a typed and restricted tool interface; the agent selects and combines
+tools for open-ended questions, follow-ups, highlighting, and reports. A fixed
+histogram alone would not require an agent.
 
 ### Phase 1 checks
 

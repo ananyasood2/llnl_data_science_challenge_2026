@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import test from "node:test";
 import ts from "typescript";
 
@@ -18,7 +19,7 @@ async function importGeometryModule() {
   const outPath = join(outDir, `geometryMetadata-${Date.now()}.mjs`);
   await mkdir(outDir, { recursive: true });
   await writeFile(outPath, transpiled);
-  return import(outPath);
+  return import(pathToFileURL(outPath).href);
 }
 
 test("formats STL metadata for the upload card", async () => {

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Measurement Lineage Validation"
+  short_description: "Validate measurement evidence and provenance"
+  default_prompt: "Use $measurement-lineage-validation to verify measurement units, revisions, and tool citations."
