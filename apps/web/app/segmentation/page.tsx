@@ -3,6 +3,7 @@ import {
   SegmentationClient,
   type SegmentationQueryParams,
 } from "./SegmentationClient";
+import Link from "next/link";
 
 type SegmentationPageProps = {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
@@ -52,6 +53,34 @@ export default async function SegmentationPage({
     voxelSizeMicron: getParam(params, "voxelSizeMicron", "unknown"),
     scaleUnit,
   };
+
+  if (!datasetContext.datasetId) {
+    return (
+      <section className="content dataset-content">
+        <div className="eyebrow">Segmentation</div>
+        <h1>CT preparation</h1>
+        <p className="lede">
+          Choose a persisted dataset before opening slice preparation. The workflow
+          navigation remains available, but CT preparation needs dataset context to
+          retrieve slices and save masks.
+        </p>
+
+        <section className="dataset-panel empty-state" aria-labelledby="ct-empty-heading">
+          <div className="section-heading">
+            <p className="panel-kicker">Dataset context required</p>
+            <h2 id="ct-empty-heading">No dataset selected</h2>
+          </div>
+          <p>
+            Start from Project / Dataset to upload or validate a CT volume, then continue
+            here with the generated dataset context.
+          </p>
+          <Link className="primary-link" href="/project-dataset">
+            Choose dataset
+          </Link>
+        </section>
+      </section>
+    );
+  }
 
   return (
     <SegmentationClient

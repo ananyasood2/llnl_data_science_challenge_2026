@@ -26,37 +26,26 @@ export default async function StructureAnalysisPage({
   const viewerUrl = getStructureViewerUrl(
     process.env.NEXT_PUBLIC_STRUCTURE_VIEWER_URL,
   );
-  const datasetId = getParam(params, "datasetId", "No dataset selected");
+  const datasetId = getParam(params, "datasetId", "");
   const threshold = getParam(params, "threshold", "Not provided");
+  const usingDefaultDataset = datasetId.length === 0;
 
   return (
-    <main className="workspace">
-      <aside className="rail" aria-label="Pipeline context">
-        <div className="mark" aria-hidden="true">
-          ◈
-        </div>
-        <div>
-          <p className="rail-kicker">Step 3</p>
-          <p className="rail-title">3D Structure Analysis</p>
-        </div>
-        <div className="rail-rule" />
-        <span className="status-pill">
-          <span aria-hidden="true">●</span> Dash viewer
-        </span>
-        <p className="rail-copy">
-          Validate the prepared CT segmentation using the existing 3D Dash dashboard.
-        </p>
-      </aside>
-
+    <>
       <section className="content structure-content">
         <div className="eyebrow">Validation</div>
         <h1>3D structure analysis</h1>
+        {usingDefaultDataset ? (
+          <p className="default-dataset-indicator" role="status">
+            Default dataset: missing_struts
+          </p>
+        ) : null}
 
         <section className="dataset-panel structure-context" aria-label="Structure analysis context">
           <dl className="project-meta">
             <div>
               <dt>Dataset ID</dt>
-              <dd>{datasetId}</dd>
+              <dd>{usingDefaultDataset ? "missing_struts" : datasetId}</dd>
             </div>
             <div>
               <dt>Threshold</dt>
@@ -71,6 +60,6 @@ export default async function StructureAnalysisPage({
 
         <StructureViewerFrame viewerUrl={viewerUrl} />
       </section>
-    </main>
+    </>
   );
 }

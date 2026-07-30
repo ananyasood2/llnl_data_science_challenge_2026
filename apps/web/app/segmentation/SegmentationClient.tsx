@@ -1733,25 +1733,7 @@ export function SegmentationClient({
   }
 
   return (
-    <main className="workspace">
-      <aside className="rail" aria-label="Pipeline context">
-        <div className="mark" aria-hidden="true">
-          ◈
-        </div>
-        <div>
-          <p className="rail-kicker">Step 2</p>
-          <p className="rail-title">CT Preparation</p>
-        </div>
-        <div className="rail-rule" />
-        <span className="status-pill">
-          <span aria-hidden="true">●</span> Preview scaffold
-        </span>
-        <p className="rail-copy">
-          Inspect slices, tune a lightweight threshold preview, and prepare the final
-          segmentation result for the 3D Structure Analysis page.
-        </p>
-      </aside>
-
+    <>
       <section className="content dataset-content">
         <div className="eyebrow">Segmentation</div>
         <h1>CT preparation</h1>
@@ -1968,6 +1950,6 @@ export function SegmentationClient({
           />
         </div>
       </section>
-    </main>
+    </>
   );
 }

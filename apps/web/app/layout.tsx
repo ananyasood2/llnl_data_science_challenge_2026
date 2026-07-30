@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
-import type { ReactNode } from "react";
+import { Suspense, type ReactNode } from "react";
 
 import "./globals.css";
+import { WorkflowSidebar } from "./WorkflowSidebar";
 
 export const metadata: Metadata = {
   title: "Lattice CT Inspection",
@@ -11,7 +12,14 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        <main className="workspace">
+          <Suspense fallback={null}>
+            <WorkflowSidebar />
+          </Suspense>
+          {children}
+        </main>
+      </body>
     </html>
   );
 }

@@ -7,7 +7,7 @@ import re
 import struct
 import uuid
 import zlib
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from functools import lru_cache
 from io import BytesIO
 from pathlib import Path
@@ -1294,7 +1294,7 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
 
 
 def _utc_now() -> str:
-    return datetime.now(UTC).isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _load_latest_job_record(dataset_dir: Path) -> dict[str, Any]:
