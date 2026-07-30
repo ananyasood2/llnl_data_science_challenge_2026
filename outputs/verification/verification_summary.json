@@ -204,26 +204,49 @@
       "thick": 1853,
       "missing": 93,
       "uncertain": 330,
-      "broken": 22
+      "disconnected": 22
     },
     "nodes_by_status": {
       "healthy": 9979,
       "uncertain": 217,
       "missing": 8,
-      "broken": 2
+      "disconnected": 2
     },
     "candidate_defect_count": 2526,
     "cad_id_metrics": {
       "method": "complete_vs_defect_cad_midpoint_surface_distance",
+      "scope": "binary_missing_or_disconnected_detection_against_cad_removals",
+      "positive_statuses": [
+        "disconnected",
+        "missing"
+      ],
+      "ground_truth_status": "intentional_missing",
+      "ground_truth_note": "The paired CAD models identify intentional removals. Disconnected predictions are included, but no independent disconnected-element ground-truth IDs are available.",
+      "overall": {
+        "total": 28674,
+        "expected": 114,
+        "predicted": 125,
+        "true_positive": 98,
+        "true_negative": 28533,
+        "false_positive": 27,
+        "false_negative": 16,
+        "accuracy": 0.9985003836227941,
+        "precision": 0.784,
+        "recall": 0.8596491228070176,
+        "f1": 0.8200836820083682
+      },
       "struts": {
+        "total": 18468,
         "expected": 93,
-        "predicted": 93,
+        "predicted": 115,
         "true_positive": 90,
-        "false_positive": 3,
+        "true_negative": 18350,
+        "false_positive": 25,
         "false_negative": 3,
-        "precision": 0.967741935483871,
+        "accuracy": 0.99848386398094,
+        "precision": 0.782608695652174,
         "recall": 0.967741935483871,
-        "f1": 0.967741935483871,
+        "f1": 0.8653846153846155,
         "true_positive_ids": [
           10,
           214,
@@ -317,8 +340,30 @@
           18200
         ],
         "false_positive_ids": [
+          1766,
+          2061,
           3779,
+          3782,
+          4215,
+          4221,
+          5564,
+          5798,
+          6141,
+          6151,
+          6245,
+          6247,
+          6254,
+          6265,
+          7404,
+          8146,
+          8160,
           8164,
+          8173,
+          8265,
+          8956,
+          10944,
+          12075,
+          17107,
           18274
         ],
         "false_negative_ids": [
@@ -328,14 +373,17 @@
         ]
       },
       "nodes": {
+        "total": 10206,
         "expected": 21,
-        "predicted": 8,
+        "predicted": 10,
         "true_positive": 8,
-        "false_positive": 0,
+        "true_negative": 10183,
+        "false_positive": 2,
         "false_negative": 13,
-        "precision": 1.0,
+        "accuracy": 0.9985302763080541,
+        "precision": 0.8,
         "recall": 0.38095238095238093,
-        "f1": 0.5517241379310345,
+        "f1": 0.5161290322580645,
         "true_positive_ids": [
           5647,
           6653,
@@ -346,7 +394,10 @@
           7813,
           7826
         ],
-        "false_positive_ids": [],
+        "false_positive_ids": [
+          9832,
+          9959
+        ],
         "false_negative_ids": [
           956,
           4566,

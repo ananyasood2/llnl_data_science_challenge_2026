@@ -414,6 +414,24 @@ def test_whole_model_performance_panel_formats_all_four_percentages():
     assert "Recall" in text and "75.0%" in text
     assert "F1" in text and "77.4%" in text
     assert "101 validated elements" in text
+    assert "Missing / disconnected detection performance" in text
+    assert "Both missing and broken / disconnected detector labels" in text
+
+
+def test_model_performance_panel_calculates_live_3d_defect_percentages():
+    analysis = _analysis_fixture()
+
+    panel = _model_performance(analysis)
+    text = _component_text(panel)
+
+    assert "LIVE 3D MODEL" in text
+    assert "Missing / disconnected percentage" in text
+    assert "Struts 40.00% 2 of 5" in text
+    assert "Nodes 50.00% 1 of 2" in text
+    assert "Combined 42.86% 3 of 7" in text
+    assert "1 missing + 1 disconnected struts" in text
+    assert "1 missing + 0 disconnected nodes" in text
+    assert "CAD validation unavailable" in text
 
 
 def test_strut_crossing_axis_limit_is_still_in_the_displayed_region():

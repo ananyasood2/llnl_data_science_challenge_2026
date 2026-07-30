@@ -234,13 +234,13 @@ def test_id_level_validation_reports_false_positives_and_negatives() -> None:
     }
     result = {
         "struts": [
-            {"id": 10, "status": "missing"},
-            {"id": 11, "status": "healthy"},
-            {"id": 12, "status": "missing"},
+            {"id": 10, "status": "disconnected"},
+            {"id": 11, "status": "missing"},
+            {"id": 12, "status": "disconnected"},
         ],
         "nodes": [
-            {"id": 0, "status": "missing"},
-            {"id": 1, "status": "healthy"},
+            {"id": 0, "status": "disconnected"},
+            {"id": 1, "status": "missing"},
             {"id": 2, "status": "healthy"},
         ],
     }
@@ -251,12 +251,27 @@ def test_id_level_validation_reports_false_positives_and_negatives() -> None:
         [10, 11],
     )
 
-    assert validation["struts"]["true_positive"] == 1
+    assert validation["struts"]["true_positive"] == 2
     assert validation["struts"]["true_negative"] == 0
     assert validation["struts"]["false_positive"] == 1
-    assert validation["struts"]["false_negative"] == 1
-    assert validation["struts"]["accuracy"] == 1 / 3
+    assert validation["struts"]["false_negative"] == 0
+    assert validation["struts"]["accuracy"] == 2 / 3
+    assert validation["positive_statuses"] == ["disconnected", "missing"]
+    assert validation["scope"] == (
+        "binary_missing_or_disconnected_detection_against_cad_removals"
+    )
     assert validation["overall"]["total"] == 6
-    assert validation["overall"]["true_positive"] == 2
+    assert validation["overall"]["true_positive"] == 4
     assert validation["overall"]["true_negative"] == 0
-    assert validation["overall"]["accuracy"] == 1 / 3
+    assert validation["overall"]["false_positive"] == 1
+    assert validation["overall"]["false_negative"] == 1
+    assert validation["overall"]["accuracy"] == 2 / 3
+    assert validation["overall"]["accuracy"] == (
+        validation["overall"]["true_positive"]
+        + validation["overall"]["true_negative"]
+    ) / (
+        validation["overall"]["true_positive"]
+        + validation["overall"]["true_negative"]
+        + validation["overall"]["false_positive"]
+        + validation["overall"]["false_negative"]
+    )

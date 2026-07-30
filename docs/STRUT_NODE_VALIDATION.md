@@ -216,10 +216,16 @@ The active cache contains candidate labels, not confirmed defects:
 | Struts | 16,170 healthy; 1,853 thick; 93 missing; 330 uncertain; 22 broken / disconnected |
 | Nodes | 9,979 healthy; 217 uncertain; 8 missing; 2 broken / disconnected |
 
-The CAD-derived intentional-removal comparison gives missing-strut precision,
-recall, and F1 of approximately 0.968 (90 true positives, 3 false positives,
-and 3 false negatives). This aggregate ID comparison is useful detector
-evaluation, but it does not prove raw CT support for an individual candidate.
+The CAD-derived intentional-removal comparison treats both missing and broken /
+disconnected detector labels as positive predictions. The combined strut/node
+metrics are approximately 0.784 precision, 0.860 recall, and 0.820 F1 (98 true
+positives, 27 false positives, and 16 false negatives). The paired CAD models
+identify intentional removals but do not provide independent IDs for scan-induced
+disconnections, so unmatched disconnected predictions count as false positives.
+This aggregate ID comparison is useful detector evaluation, but it does not prove
+raw CT support for an individual candidate.
+
+Accuracy uses `(TP + TN) / (TP + TN + FP + FN)`.
 
 ## Scientific risks
 

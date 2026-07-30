@@ -20,6 +20,8 @@ _BINARY_STL_TRIANGLE = np.dtype(
     ]
 )
 
+CONTINUITY_DEFECT_STATUSES = frozenset({"missing", "disconnected"})
+
 
 def _point_key(point: Sequence[float]) -> tuple[float, float, float]:
     return tuple(float(value) for value in np.round(point, 8))
@@ -234,11 +236,18 @@ def evaluate_against_intentional_missing(
     nominal_graph: Mapping[str, Any],
     expected_strut_ids: Sequence[int],
 ) -> dict[str, Any]:
-    """Return exact ID-level binary missing-element validation metrics."""
+    """Return ID-level missing/disconnected detection metrics against CAD removals.
+
+    The defect CAD supplies intentional-removal ground truth. Both ``missing`` and
+    ``disconnected`` detector labels are positive predictions so continuity
+    failures participate in the confusion matrix.
+    """
 
     expected_struts = {int(value) for value in expected_strut_ids}
     predicted_struts = {
-        int(item["id"]) for item in result["struts"] if item["status"] == "missing"
+        int(item["id"])
+        for item in result["struts"]
+        if item["status"] in CONTINUITY_DEFECT_STATUSES
     }
     incident: dict[int, set[int]] = defaultdict(set)
     for strut in nominal_graph["struts"]:
@@ -251,7 +260,9 @@ def evaluate_against_intentional_missing(
         if strut_ids and strut_ids <= expected_struts
     }
     predicted_nodes = {
-        int(item["id"]) for item in result["nodes"] if item["status"] == "missing"
+        int(item["id"])
+        for item in result["nodes"]
+        if item["status"] in CONTINUITY_DEFECT_STATUSES
     }
 
     strut_universe = {
@@ -270,6 +281,12 @@ def evaluate_against_intentional_missing(
         false_positive = predicted - expected
         false_negative = expected - predicted
         true_negative = universe - (expected | predicted)
+        confusion_total = (
+            len(true_positive)
+            + len(true_negative)
+            + len(false_positive)
+            + len(false_negative)
+        )
         precision = len(true_positive) / len(predicted) if predicted else 0.0
         recall = len(true_positive) / len(expected) if expected else 0.0
         f1 = (
@@ -278,8 +295,8 @@ def evaluate_against_intentional_missing(
             else 0.0
         )
         accuracy = (
-            (len(true_positive) + len(true_negative)) / len(universe)
-            if universe
+            (len(true_positive) + len(true_negative)) / confusion_total
+            if confusion_total
             else 0.0
         )
         return {
@@ -325,12 +342,21 @@ def evaluate_against_intentional_missing(
         if overall_counts["true_positive"] + overall_counts["false_negative"]
         else 0.0
     )
+    overall_confusion_total = sum(
+        overall_counts[name]
+        for name in (
+            "true_positive",
+            "true_negative",
+            "false_positive",
+            "false_negative",
+        )
+    )
     overall = {
         **overall_counts,
         "accuracy": (
             (overall_counts["true_positive"] + overall_counts["true_negative"])
-            / overall_counts["total"]
-            if overall_counts["total"]
+            / overall_confusion_total
+            if overall_confusion_total
             else 0.0
         ),
         "precision": overall_precision,
@@ -347,7 +373,14 @@ def evaluate_against_intentional_missing(
 
     return {
         "method": "complete_vs_defect_cad_midpoint_surface_distance",
-        "scope": "binary_missing_element_detection_against_cad",
+        "scope": "binary_missing_or_disconnected_detection_against_cad_removals",
+        "positive_statuses": sorted(CONTINUITY_DEFECT_STATUSES),
+        "ground_truth_status": "intentional_missing",
+        "ground_truth_note": (
+            "The paired CAD models identify intentional removals. Disconnected "
+            "predictions are included, but no independent disconnected-element "
+            "ground-truth IDs are available."
+        ),
         "overall": overall,
         "struts": strut_metrics,
         "nodes": node_metrics,

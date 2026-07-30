@@ -31,11 +31,15 @@ For the registered 0.5% specimen, the pipeline robustly refines the supplied
 graph registration against the CT skeleton while excluding likely defect
 outliers. Exterior faces with scan-wide absence are labeled
 `boundary / uncertain` instead of being counted as missing. The complete and
-0.5% CAD STLs provide an independent 93-strut ground-truth set; the viewer
-reports ID-level validation and shows whole-model accuracy, precision, recall,
-and F1 for binary missing-element detection. The raw CT verification panel also
-explains what the selected scan region shows and which measured signal caused
-its candidate label.
+0.5% CAD STLs provide an independent 93-strut intentional-removal ground-truth
+set; the viewer reports ID-level validation and shows whole-model accuracy,
+precision, recall, and F1 with both missing and broken / disconnected detector
+labels treated as positive predictions. The CAD pair does not provide
+independent IDs for scan-induced disconnections. The dashboard separately
+recalculates the live percentage of missing or disconnected struts, nodes, and
+combined elements whenever the active segmentation threshold changes. The raw CT
+verification panel also explains what the selected scan region shows and which
+measured signal caused its candidate label.
 
 ```bash
 python -m pip install -r requirements.txt
