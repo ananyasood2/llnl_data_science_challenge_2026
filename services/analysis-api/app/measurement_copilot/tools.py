@@ -17,11 +17,47 @@ from app.repositories.measurements import (
     measurement_repository,
 )
 
-from .contracts import MeasurementToolEnvelope, StoredMeasurementContext
+from .contracts import (
+    MeasurementContextCreate,
+    MeasurementToolEnvelope,
+    StoredMeasurementContext,
+)
 from .store import measurement_context_store
 
 
 ToolFunction = Callable[..., dict[str, Any]]
+
+
+def create_measurement_context(
+    dataset_id: str = "missing_struts",
+    target_thickness_um: float = 350.0,
+    critical_cutoff_um: float = 300.0,
+    user_cutoff_um: float = 350.0,
+    target_density_percent: float = 10.0,
+    selected_strut_id: int | str | None = None,
+    visible_statuses: list[str] | None = None,
+) -> dict[str, Any]:
+    """Create the immutable context required by dataset-scoped measurement tools."""
+
+    try:
+        payload = MeasurementContextCreate(
+            dataset_id=dataset_id,
+            target_thickness_um=target_thickness_um,
+            critical_cutoff_um=critical_cutoff_um,
+            user_cutoff_um=user_cutoff_um,
+            target_density_percent=target_density_percent,
+            selected_strut_id=selected_strut_id,
+            visible_statuses=visible_statuses or [],
+        )
+        revision = measurement_repository.revision(payload.dataset_id)
+    except MeasurementDatasetNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except MeasurementPrerequisiteError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return measurement_context_store.put(payload, revision).model_dump(mode="json")
 
 
 def _context(context_id: str) -> StoredMeasurementContext:
@@ -287,6 +323,7 @@ def create_measurement_report(context_id: str) -> dict[str, Any]:
 
 
 TOOL_REGISTRY: dict[str, ToolFunction] = {
+    "create_measurement_context": create_measurement_context,
     "get_measurement_context": get_measurement_context,
     "get_thickness_summary": get_thickness_summary,
     "list_out_of_spec_struts": list_out_of_spec_struts,

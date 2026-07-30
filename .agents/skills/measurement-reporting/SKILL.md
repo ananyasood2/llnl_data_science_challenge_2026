@@ -7,10 +7,11 @@ description: Create reproducible lattice CT measurement reports from cited thick
 
 ## Workflow
 
-1. Verify the measurement context and analysis revision.
-2. Obtain `get_thickness_summary`, `get_relative_density`, and `compare_measurements_to_design` results.
-3. Call `create_measurement_report`; do not build report metrics in prose or code outside the deterministic service.
-4. Return the approved artifact link and cite the report tool run.
+1. Call `create_measurement_context` when no valid `context_id` was supplied.
+2. Verify the measurement context and analysis revision.
+3. Obtain `get_thickness_summary`, `get_relative_density`, and `compare_measurements_to_design` results.
+4. Call `create_measurement_report`; do not build report metrics in prose or code outside the deterministic service.
+5. Return the approved artifact link and cite the report tool run.
 
 ## Required Content
 

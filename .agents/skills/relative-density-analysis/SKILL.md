@@ -7,10 +7,11 @@ description: Analyze segmented material volume, registered enclosing volume, com
 
 ## Workflow
 
-1. Call `get_measurement_context` and verify the dataset and analysis revision.
-2. Call `get_relative_density` for segmented volume, enclosing volume, density, target, and ROI definition.
-3. Call `compare_measurements_to_design` when a pass/warn/fail comparison is requested.
-4. Cite each numerical statement as `[tool_name:tool_run_id]`.
+1. Call `create_measurement_context` when no valid `context_id` was supplied.
+2. Call `get_measurement_context` and verify the dataset and analysis revision.
+3. Call `get_relative_density` for segmented volume, enclosing volume, density, target, and ROI definition.
+4. Call `compare_measurements_to_design` when a pass/warn/fail comparison is requested.
+5. Cite each numerical statement as `[tool_name:tool_run_id]`.
 
 ## Interpretation Rules
 

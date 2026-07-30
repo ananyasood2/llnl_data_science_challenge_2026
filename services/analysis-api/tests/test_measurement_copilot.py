@@ -9,14 +9,16 @@ from types import SimpleNamespace
 
 import httpx
 import numpy as np
+import pytest
+from fastapi import HTTPException
 
 from app.core.config import get_settings
 from app.main import app
 from app.measurement_copilot.contracts import MeasurementContextCreate
 from app.measurement_copilot.mcp_server import mcp
-from app.measurement_copilot.orchestrator import run_measurement_copilot
+from app.measurement_copilot.orchestrator import OPENAI_TOOLS, run_measurement_copilot
 from app.measurement_copilot.store import measurement_context_store
-from app.measurement_copilot.tools import TOOL_REGISTRY
+from app.measurement_copilot.tools import TOOL_REGISTRY, create_measurement_context
 from app.repositories.measurements import measurement_repository
 
 
@@ -81,6 +83,80 @@ def test_mcp_registers_all_dataset_scoped_measurement_tools() -> None:
     tools = asyncio.run(mcp.list_tools())
     names = {tool.name for tool in tools}
     assert names == set(TOOL_REGISTRY)
+
+
+def test_context_creation_is_not_exposed_to_webpage_model() -> None:
+    names = {tool["name"] for tool in OPENAI_TOOLS}
+    assert "create_measurement_context" not in names
+
+
+def test_mcp_context_entry_point_qualifies_dataset_and_defaults(tmp_path, monkeypatch) -> None:
+    _configure(tmp_path, monkeypatch)
+    try:
+        created = create_measurement_context(dataset_id="agent_sample")
+    finally:
+        get_settings.cache_clear()
+
+    assert created["context_id"].startswith("mctx_")
+    assert created["dataset_id"] == "agent_sample"
+    assert created["analysis_revision"] == "agent-fixture-revision"
+    assert created["target_thickness_um"] == 350.0
+    assert created["critical_cutoff_um"] == 300.0
+    assert created["user_cutoff_um"] == 350.0
+    assert created["target_density_percent"] == 10.0
+    assert created["selected_strut_id"] is None
+    assert created["visible_statuses"] == []
+    assert "path" not in json.dumps(created).lower()
+
+
+def test_mcp_context_entry_point_rejects_unknown_dataset(tmp_path, monkeypatch) -> None:
+    _configure(tmp_path, monkeypatch)
+    try:
+        with pytest.raises(HTTPException) as error:
+            create_measurement_context(dataset_id="not_registered")
+    finally:
+        get_settings.cache_clear()
+
+    assert error.value.status_code == 404
+
+
+def test_mcp_context_drives_all_measurement_evidence_tools(tmp_path, monkeypatch) -> None:
+    _configure(tmp_path, monkeypatch)
+    try:
+        context = create_measurement_context(
+            dataset_id="agent_sample",
+            user_cutoff_um=325.0,
+        )
+        results = [
+            TOOL_REGISTRY[name](context_id=context["context_id"])
+            for name in (
+                "get_measurement_context",
+                "get_thickness_summary",
+                "list_out_of_spec_struts",
+                "get_relative_density",
+                "compare_measurements_to_design",
+                "analyze_measurement_sensitivity",
+                "create_measurement_report",
+            )
+        ]
+    finally:
+        get_settings.cache_clear()
+
+    assert [result["tool_name"] for result in results] == [
+        "get_measurement_context",
+        "get_thickness_summary",
+        "list_out_of_spec_struts",
+        "get_relative_density",
+        "compare_measurements_to_design",
+        "analyze_measurement_sensitivity",
+        "create_measurement_report",
+    ]
+    assert {result["analysis_revision"] for result in results} == {
+        "agent-fixture-revision"
+    }
+    serialized = json.dumps(results).lower()
+    assert str(tmp_path).lower() not in serialized
+    assert "mask.npy" not in serialized
 
 
 def test_broad_question_routes_both_specialists_and_highlights_outliers(tmp_path, monkeypatch) -> None:

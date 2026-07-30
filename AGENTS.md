@@ -14,9 +14,9 @@ and existing commands while extending the application.
 - Preserve XYZ public coordinates and ZYX NumPy indexing.
 - Treat `demo-policy-v1` pass/warn/fail results as provisional, not as an
   approved engineering acceptance decision.
-- Read the relevant workflow in `copilot-guidance/skills/` before changing a
-  measurement-agent behavior. Role boundaries are in
-  `copilot-guidance/agents/`.
+- Read the relevant workflow in `.agents/skills/` before changing a
+  measurement-agent behavior. Executable Codex role definitions are in
+  `.codex/agents/`.
 - Validate Python changes with
   `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q` from
   `services/analysis-api`, and web changes with `npm run typecheck:web`,

@@ -116,7 +116,7 @@ measurements with a traceable agent workflow. It includes:
 - Measurement Copilot with Thickness Analysis and Relative Density specialist tools
 - tool/run/revision trace, viewer actions, and derivative report downloads
 
-Run it in two PowerShell terminals from the repository root:
+Run the Measurements page in two PowerShell terminals from the repository root:
 
 ```powershell
 # Terminal 1
@@ -127,6 +127,15 @@ npm run dev:api
 
 # Terminal 2
 npm run dev:web
+```
+
+The separate Dash/Plotly structure viewer is needed only for the **3D Structure
+Analysis** page. To make every sidebar page available, use a third terminal:
+
+```powershell
+# Terminal 3
+conda activate dssi_env
+npm run dev:structure
 ```
 
 Open <http://localhost:3000/measurements>. The built-in registered
@@ -144,17 +153,64 @@ MEASUREMENT_COPILOT_REASONING_EFFORT=medium
 
 Never place the key in `apps/web/.env.local` or any `NEXT_PUBLIC_*` value.
 
-The measurement MCP server can also run independently:
+### Codex skills, subagents, and unified MCP tools
+
+Codex discovers the four measurement workflows from `.agents/skills/` and the
+four specialist definitions from `.codex/agents/`. Each skill's `SKILL.md`
+controls triggering and procedure; its optional `agents/openai.yaml` contains
+only user-interface labels and a suggested prompt.
+
+The Part 1 server at `src/mcp_server.py` is the single Codex MCP entry point.
+It preserves the three original tools and also exposes eight dataset-scoped
+measurement tools:
+
+```text
+segment_ct_dataset
+visualize_slice
+skeletonize
+create_measurement_context
+get_measurement_context
+get_thickness_summary
+list_out_of_spec_struts
+get_relative_density
+compare_measurements_to_design
+analyze_measurement_sensitivity
+create_measurement_report
+```
+
+The existing local registration remains:
+
+```toml
+[mcp_servers.segmentation-tools]
+command = "C:\\Users\\krrit\\anaconda3\\envs\\dssi_env\\python.exe"
+args = ["C:\\Users\\krrit\\OneDrive\\Documents\\projects\\llnl_data_science_challenge_2026\\src\\mcp_server.py"]
+env = {}
+```
+
+For a teammate who has not registered it yet, run this from the repository root
+in their own PowerShell session:
+
+```powershell
+$pythonPath = (Get-Command python).Source
+$repositoryPath = (Resolve-Path .).Path
+codex mcp add segmentation-tools -- $pythonPath "$repositoryPath\src\mcp_server.py"
+```
+
+Close and restart Codex after changing MCP configuration, skills, or subagents,
+then use `/mcp` to verify the 11 tools. Codex starts this stdio server itself;
+do not keep a fourth terminal open for it. A first request can create its own
+context, for example: “Create a measurement context for `missing_struts`, then
+analyze the thickness distribution and highlight the ten worst struts.”
+
+The service-specific measurement MCP launcher remains available for internal
+diagnostics and API contract testing, but it is not the Codex registration:
 
 ```powershell
 npm run dev:measurement-mcp
 ```
 
-For Codex CLI, configure its command as the absolute path to the active Python
-environment and its single argument as the absolute path to
-`services/analysis-api/measurement_mcp_server.py`. Restart Codex after changing
-MCP configuration. The exposed tools accept context IDs rather than arbitrary
-filesystem paths.
+Codex MCP use does not require `OPENAI_API_KEY`; that optional key applies only
+to the webpage's Responses API orchestration.
 
 The scientific boundary is intentional: Python computes every value; MCP
 provides a typed and restricted tool interface; the agent selects and combines

@@ -4,6 +4,11 @@ import sys
 import numpy as np
 from fastmcp import FastMCP
 
+repository_root = Path(__file__).resolve().parents[1]
+analysis_api_dir = str(repository_root / "services" / "analysis-api")
+if analysis_api_dir not in sys.path:
+    sys.path.insert(0, analysis_api_dir)
+
 if __package__:
     from .skeletonization import skeletonize_mask
 else:
@@ -15,8 +20,19 @@ else:
         sys.path.insert(0, source_dir)
     from skeletonization import skeletonize_mask
 
+from app.measurement_copilot.tools import (
+    analyze_measurement_sensitivity as _analyze_measurement_sensitivity,
+    compare_measurements_to_design as _compare_measurements_to_design,
+    create_measurement_context as _create_measurement_context,
+    create_measurement_report as _create_measurement_report,
+    get_measurement_context as _get_measurement_context,
+    get_relative_density as _get_relative_density,
+    get_thickness_summary as _get_thickness_summary,
+    list_out_of_spec_struts as _list_out_of_spec_struts,
+)
+
 # Initialize the MCP server
-mcp = FastMCP("CT Segmentation")
+mcp = FastMCP("Lattice CT Analysis")
 
 @mcp.tool()
 def segment_ct_dataset(input_filepath: str, output_filepath: str, threshold: float) -> str:
@@ -124,6 +140,85 @@ def skeletonize(input_filepath: str, output_filepath: str) -> str:
         f"Saved skeleton to {output_path} "
         f"({int(np.count_nonzero(skeleton))} skeleton voxels)"
     )
+
+
+@mcp.tool()
+def create_measurement_context(
+    dataset_id: str = "missing_struts",
+    target_thickness_um: float = 350.0,
+    critical_cutoff_um: float = 300.0,
+    user_cutoff_um: float = 350.0,
+    target_density_percent: float = 10.0,
+    selected_strut_id: int | str | None = None,
+    visible_statuses: list[str] | None = None,
+) -> dict:
+    """Create the immutable dataset context required by measurement tools."""
+
+    return _create_measurement_context(
+        dataset_id=dataset_id,
+        target_thickness_um=target_thickness_um,
+        critical_cutoff_um=critical_cutoff_um,
+        user_cutoff_um=user_cutoff_um,
+        target_density_percent=target_density_percent,
+        selected_strut_id=selected_strut_id,
+        visible_statuses=visible_statuses,
+    )
+
+
+@mcp.tool()
+def get_measurement_context(context_id: str) -> dict:
+    """Return the immutable targets and qualified revision for a context."""
+
+    return _get_measurement_context(context_id)
+
+
+@mcp.tool()
+def get_thickness_summary(context_id: str) -> dict:
+    """Return deterministic thickness statistics, histogram, and exclusions."""
+
+    return _get_thickness_summary(context_id)
+
+
+@mcp.tool()
+def list_out_of_spec_struts(
+    context_id: str,
+    cutoff_um: float | None = None,
+    limit: int = 10,
+) -> dict:
+    """Return a bounded, thinnest-first list of struts below a cutoff."""
+
+    return _list_out_of_spec_struts(context_id, cutoff_um, limit)
+
+
+@mcp.tool()
+def get_relative_density(context_id: str) -> dict:
+    """Return deterministic material volume, ROI volume, and relative density."""
+
+    return _get_relative_density(context_id)
+
+
+@mcp.tool()
+def compare_measurements_to_design(context_id: str) -> dict:
+    """Compare thickness and density with the explicit provisional policy."""
+
+    return _compare_measurements_to_design(context_id)
+
+
+@mcp.tool()
+def analyze_measurement_sensitivity(
+    context_id: str,
+    cutoffs_um: list[float] | None = None,
+) -> dict:
+    """Compare percent-below results across at most twenty thickness cutoffs."""
+
+    return _analyze_measurement_sensitivity(context_id, cutoffs_um)
+
+
+@mcp.tool()
+def create_measurement_report(context_id: str) -> dict:
+    """Create immutable JSON and Markdown reports from deterministic results."""
+
+    return _create_measurement_report(context_id)
 
 if __name__ == "__main__":
     # Run the FastMCP server, exposing the tools over standard I/O (default)

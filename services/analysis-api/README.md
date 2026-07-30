@@ -38,9 +38,12 @@ GET  /v1/measurement-copilot/runs/{run_id}
 GET  /v1/measurement-copilot/artifacts/{artifact_id}
 ```
 
-Run the MCP server from the repository root with
-`npm run dev:measurement-mcp`. It exposes only dataset/context-scoped tools and
-never returns raw CT arrays or server paths.
+The service-only MCP launcher can be inspected with
+`npm run dev:measurement-mcp`. Codex itself is registered against the unified
+`src/mcp_server.py`, which exposes the original Part 1 tools plus these service
+tools. `create_measurement_context` is the dataset-scoped entry point; the
+remaining measurement tools require its returned context ID. They never return
+raw CT arrays or server paths.
 
 Do not add scientific calculations to API route modules. Future implementations
 must sit behind service interfaces and return validated Pydantic schemas.

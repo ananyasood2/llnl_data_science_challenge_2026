@@ -16,12 +16,7 @@ from app.measurement_copilot.contracts import (
     StoredMeasurementContext,
 )
 from app.measurement_copilot.orchestrator import run_measurement_copilot
-from app.measurement_copilot.store import measurement_context_store
-from app.repositories.measurements import (
-    MeasurementDatasetNotFoundError,
-    MeasurementPrerequisiteError,
-    measurement_repository,
-)
+from app.measurement_copilot.tools import create_measurement_context as create_context_tool
 
 
 router = APIRouter(prefix="/v1/measurement-copilot", tags=["measurement-copilot"])
@@ -31,13 +26,9 @@ router = APIRouter(prefix="/v1/measurement-copilot", tags=["measurement-copilot"
 async def create_measurement_context(
     payload: MeasurementContextCreate,
 ) -> StoredMeasurementContext:
-    try:
-        revision = measurement_repository.revision(payload.dataset_id)
-    except MeasurementDatasetNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except MeasurementPrerequisiteError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return measurement_context_store.put(payload, revision)
+    return StoredMeasurementContext.model_validate(
+        create_context_tool(**payload.model_dump(exclude={"version"}))
+    )
 
 
 @router.post(
@@ -85,4 +76,3 @@ async def get_measurement_artifact(
         raise HTTPException(status_code=404, detail="Measurement artifact not found.")
     media_type = "text/markdown" if suffix == ".md" else "application/json"
     return FileResponse(path, media_type=media_type, filename=path.name)
-

@@ -7,6 +7,7 @@ from fastmcp import FastMCP
 from .tools import (
     analyze_measurement_sensitivity as _analyze_measurement_sensitivity,
     compare_measurements_to_design as _compare_measurements_to_design,
+    create_measurement_context as _create_measurement_context,
     create_measurement_report as _create_measurement_report,
     get_measurement_context as _get_measurement_context,
     get_relative_density as _get_relative_density,
@@ -16,6 +17,29 @@ from .tools import (
 
 
 mcp = FastMCP("Lattice Measurement Analysis")
+
+
+@mcp.tool()
+def create_measurement_context(
+    dataset_id: str = "missing_struts",
+    target_thickness_um: float = 350.0,
+    critical_cutoff_um: float = 300.0,
+    user_cutoff_um: float = 350.0,
+    target_density_percent: float = 10.0,
+    selected_strut_id: int | str | None = None,
+    visible_statuses: list[str] | None = None,
+) -> dict:
+    """Create an immutable dataset context and return its ID and analysis revision."""
+
+    return _create_measurement_context(
+        dataset_id=dataset_id,
+        target_thickness_um=target_thickness_um,
+        critical_cutoff_um=critical_cutoff_um,
+        user_cutoff_um=user_cutoff_um,
+        target_density_percent=target_density_percent,
+        selected_strut_id=selected_strut_id,
+        visible_statuses=visible_statuses,
+    )
 
 
 @mcp.tool()

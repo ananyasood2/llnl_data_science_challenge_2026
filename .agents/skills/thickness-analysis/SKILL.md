@@ -9,7 +9,7 @@ Use deterministic tool output for every numerical claim.
 
 ## Workflow
 
-1. Obtain a measurement `context_id`; never accept a dataset path.
+1. Call `create_measurement_context` when no valid `context_id` was supplied; never accept a dataset path.
 2. Call `get_measurement_context` and verify the qualified analysis revision.
 3. Call `get_thickness_summary` for distribution statistics and eligibility counts.
 4. Call `list_out_of_spec_struts` only when rankings or highlighting are relevant. Keep its limit at or below 50.
