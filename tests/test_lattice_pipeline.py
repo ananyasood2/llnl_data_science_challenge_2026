@@ -66,6 +66,75 @@ def test_absent_design_strut_is_missing_and_schema_is_complete() -> None:
     assert result["summary"]["connectivity"] == 26
 
 
+def test_present_strut_in_secondary_component_is_disconnected() -> None:
+    mask = np.zeros((24, 24, 32), dtype=bool)
+    skeleton = np.zeros_like(mask)
+    skeleton[5, 5, 2:29] = True
+    skeleton[16, 16, 2:13] = True
+    mask[skeleton] = True
+    distance = ndimage.distance_transform_edt(mask)
+    nodes = [
+        {"id": 0, "position": [2, 5, 5]},
+        {"id": 1, "position": [28, 5, 5]},
+        {"id": 2, "position": [2, 16, 16]},
+        {"id": 3, "position": [12, 16, 16]},
+    ]
+    struts = [
+        {"id": 10, "junction0": 0, "junction1": 1},
+        {"id": 11, "junction0": 2, "junction1": 3},
+    ]
+
+    result = classify_defects(
+        mask,
+        skeleton,
+        distance,
+        nodes,
+        struts,
+        0.05,
+        config=DefectConfig(nominal_thickness_um=None),
+    )
+
+    disconnected = result["struts"][1]
+    assert disconnected["status"] == "disconnected"
+    assert disconnected["connectivity_reason"] == "secondary_skeleton_component"
+    assert disconnected["component_id"] != result["struts"][0]["component_id"]
+    defect = next(
+        item
+        for item in result["defects"]
+        if item["affected_element"] == {"kind": "strut", "id": 11}
+    )
+    assert defect["type"] == "disconnected"
+    assert defect["severity"] == "high"
+
+
+def test_internal_break_uses_same_disconnected_category() -> None:
+    mask = np.zeros((24, 24, 28), dtype=bool)
+    skeleton = np.zeros_like(mask)
+    skeleton[12, 12, 2:14] = True
+    mask[skeleton] = True
+    distance = ndimage.distance_transform_edt(mask)
+    nodes = [
+        {"id": 0, "position": [2, 12, 12]},
+        {"id": 1, "position": [24, 12, 12]},
+    ]
+    struts = [{"id": 20, "junction0": 0, "junction1": 1}]
+
+    result = classify_defects(
+        mask,
+        skeleton,
+        distance,
+        nodes,
+        struts,
+        0.05,
+        config=DefectConfig(nominal_thickness_um=None),
+    )
+
+    strut = result["struts"][0]
+    assert strut["status"] == "disconnected"
+    assert strut["connectivity_reason"] == "interior_skeleton_endpoint"
+    assert "broken" not in {item["type"] for item in result["defects"]}
+
+
 def test_robust_refinement_moves_registered_edges_toward_skeleton() -> None:
     positions = np.asarray(
         [[4, 4, 4], [14, 4, 4], [4, 14, 4], [4, 4, 14]],
@@ -183,5 +252,11 @@ def test_id_level_validation_reports_false_positives_and_negatives() -> None:
     )
 
     assert validation["struts"]["true_positive"] == 1
+    assert validation["struts"]["true_negative"] == 0
     assert validation["struts"]["false_positive"] == 1
     assert validation["struts"]["false_negative"] == 1
+    assert validation["struts"]["accuracy"] == 1 / 3
+    assert validation["overall"]["total"] == 6
+    assert validation["overall"]["true_positive"] == 2
+    assert validation["overall"]["true_negative"] == 0
+    assert validation["overall"]["accuracy"] == 1 / 3

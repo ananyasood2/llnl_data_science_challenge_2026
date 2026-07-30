@@ -1,8 +1,19 @@
-from fastmcp import FastMCP
 from pathlib import Path
+import sys
 
 import numpy as np
-from .skeletonization import skeletonize_mask
+from fastmcp import FastMCP
+
+if __package__:
+    from .skeletonization import skeletonize_mask
+else:
+    # Codex starts this file using the documented absolute script path. In
+    # that mode Python does not create a ``src`` package, so a relative import
+    # fails before FastMCP can initialize.
+    source_dir = str(Path(__file__).resolve().parent)
+    if source_dir not in sys.path:
+        sys.path.insert(0, source_dir)
+    from skeletonization import skeletonize_mask
 
 # Initialize the MCP server
 mcp = FastMCP("CT Segmentation")

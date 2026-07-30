@@ -23,15 +23,19 @@ Browser ──> Next.js web service ──> FastAPI analysis service
 The focused Dash app compares the registered missing-strut TIFF/JSON pair by
 default. It renders the classified design as an interactive 3D model, shows
 missing struts as red dotted lines and missing nodes as red open diamonds, and
-filters healthy, missing, boundary-uncertain, thin, and thick elements
-independently.
+filters healthy, missing, broken / disconnected, boundary-uncertain, thin, and
+thick elements independently. Broken and disconnected continuity failures share
+one teal long-dashed category linked to the raw-CT evidence inspector.
 
 For the registered 0.5% specimen, the pipeline robustly refines the supplied
 graph registration against the CT skeleton while excluding likely defect
 outliers. Exterior faces with scan-wide absence are labeled
 `boundary / uncertain` instead of being counted as missing. The complete and
 0.5% CAD STLs provide an independent 93-strut ground-truth set; the viewer
-reports ID-level precision, recall, and F1 alongside the detected count.
+reports ID-level validation and shows whole-model accuracy, precision, recall,
+and F1 for binary missing-element detection. The raw CT verification panel also
+explains what the selected scan region shows and which measured signal caused
+its candidate label.
 
 ```bash
 python -m pip install -r requirements.txt

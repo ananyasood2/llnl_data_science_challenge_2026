@@ -26,14 +26,34 @@ for path in (str(REPO_ROOT), str(SRC_ROOT)):
 
 from app.datasets import DATASETS, get_dataset  # noqa: E402
 from lattice_pipeline.cache import ensure_analysis, load_cached_arrays  # noqa: E402
+from lattice_pipeline.defects import STATUS_VALUES  # noqa: E402
 from lattice_pipeline.io import load_volume  # noqa: E402
 
 
-STATUS_ORDER = ("healthy", "thick", "thin", "missing", "uncertain")
-FILTER_ORDER = ("missing", "uncertain", "thin", "thick", "healthy")
+STATUS_ORDER = (
+    "healthy",
+    "thick",
+    "thin",
+    "missing",
+    "disconnected",
+    "uncertain",
+)
+FILTER_ORDER = (
+    "missing",
+    "disconnected",
+    "uncertain",
+    "thin",
+    "thick",
+    "healthy",
+)
+if frozenset(STATUS_ORDER) != STATUS_VALUES:
+    raise RuntimeError(
+        "The 3D dashboard status registry must match the defect classifier"
+    )
 STATUS_COLORS = {
     "healthy": "#7f9aa8",
     "missing": "#ff4868",
+    "disconnected": "#21d6b5",
     "uncertain": "#4da3ff",
     "thin": "#ffb547",
     "thick": "#a978ff",
@@ -41,6 +61,7 @@ STATUS_COLORS = {
 STATUS_LABELS = {
     "healthy": "Healthy",
     "missing": "Missing",
+    "disconnected": "Broken / disconnected",
     "uncertain": "Boundary / uncertain",
     "thin": "Thin",
     "thick": "Thick",
@@ -377,6 +398,7 @@ def _strut_trace(
         "thin": 4.0,
         "thick": 4.2,
         "missing": 5.4,
+        "disconnected": 5.0,
         "uncertain": 3.0,
     }[status]
     opacity = 0.54 if status == "healthy" else 0.96
@@ -391,7 +413,11 @@ def _strut_trace(
             "dash": (
                 "dot"
                 if status == "missing"
-                else "dash" if status == "uncertain" else "solid"
+                else "longdash"
+                if status == "disconnected"
+                else "dash"
+                if status == "uncertain"
+                else "solid"
             ),
         },
         opacity=opacity,
@@ -418,7 +444,11 @@ def _node_trace(
     status: str,
     axis_order: str,
 ) -> go.Scatter3d:
-    missing = status == "missing"
+    emphasized = status in {"missing", "disconnected"}
+    marker_symbol = {
+        "missing": "diamond-open",
+        "disconnected": "square-open",
+    }.get(status, "circle")
     positions = _reorder_xyz(
         [[record["x"], record["y"], record["z"]] for record in records],
         axis_order,
@@ -429,12 +459,12 @@ def _node_trace(
         z=positions[:, 2],
         mode="markers",
         marker={
-            "size": 6.5 if missing else 2.2,
-            "symbol": "diamond-open" if missing else "circle",
+            "size": 6.5 if emphasized else 2.2,
+            "symbol": marker_symbol,
             "color": STATUS_COLORS[status],
-            "opacity": 1.0 if missing else 0.48,
+            "opacity": 1.0 if emphasized else 0.48,
             "line": {
-                "width": 2 if missing else 0,
+                "width": 2 if emphasized else 0,
                 "color": STATUS_COLORS[status],
             },
         },
@@ -1065,6 +1095,202 @@ def _evidence_figure(
     return figure
 
 
+def _ct_reading_narrative(
+    analysis: dict[str, Any],
+    selected: tuple[str, dict[str, Any]],
+) -> Any:
+    """Explain the selected result using only its measured CT-derived signals."""
+
+    kind, item = selected
+    status = str(item["status"])
+    threshold = float(analysis["meta"]["threshold"])
+
+    if kind == "strut":
+        present = float(item.get("present_fraction", 0.0))
+        material = float(item.get("mask_material_fraction", 0.0))
+        skeleton_support = float(item.get("skeleton_support_fraction", 0.0))
+        description = (
+            f"At intensity threshold {threshold:g}, {100 * material:.1f}% of the "
+            f"expected strut centerline samples contain segmented CT material and "
+            f"{100 * skeleton_support:.1f}% have nearby skeleton support. Combining "
+            f"those signals gives {100 * present:.1f}% path support."
+        )
+        ratio = item.get("thickness_ratio")
+        if ratio is not None:
+            description += (
+                f" The path-level diameter estimate is {float(ratio):.2f}× the "
+                "nominal design diameter."
+            )
+        thresholds = item.get("decision_thresholds", {})
+        if status == "missing":
+            cutoff = float(thresholds.get("missing_present_fraction", 0.0))
+            reasoning = (
+                f"Path support is below the {100 * cutoff:.1f}% missing-material "
+                "cutoff, so the thresholded CT does not show enough material along "
+                "the expected strut."
+            )
+        elif status == "disconnected":
+            if item.get("connectivity_reason") == "interior_skeleton_endpoint":
+                reasoning = (
+                    "The CT-derived skeleton terminates inside the expected strut "
+                    "instead of continuing to a design node. This continuity break "
+                    "is reported in the combined Broken / disconnected category."
+                )
+            else:
+                component_id = item.get("component_id")
+                reasoning = (
+                    "Material is visible along the expected path, but its CT-derived "
+                    f"skeleton belongs to component {component_id if component_id is not None else 'unknown'} "
+                    "rather than the main lattice network. It is therefore separate "
+                    "from the main lattice network, producing the Broken / "
+                    "disconnected result."
+                )
+        elif status == "thin" and ratio is not None:
+            reasoning = (
+                f"The estimated diameter ratio {float(ratio):.2f}× is below the "
+                f"{float(thresholds.get('thin_ratio', 0.0)):.2f}× thin-strut rule."
+            )
+        elif status == "thick" and ratio is not None:
+            reasoning = (
+                f"The estimated diameter ratio {float(ratio):.2f}× is above the "
+                f"{float(thresholds.get('thick_ratio', 0.0)):.2f}× thick-strut rule."
+            )
+        elif status == "uncertain":
+            reasoning = (
+                "The CT signals fall near a decision boundary or a scan boundary, "
+                "so the available evidence is not strong enough for a definite class."
+            )
+        else:
+            reasoning = (
+                "The CT contains sufficient material and centerline continuity along "
+                "the expected path, and no defect rule was triggered."
+            )
+    else:
+        mask_present = bool(item.get("mask_present"))
+        skeleton_near = bool(item.get("skeleton_near"))
+        skeleton_distance = item.get("skeleton_distance_vox")
+        distance_text = (
+            f" The nearest skeleton is {float(skeleton_distance):.2f} analysis "
+            "voxels away."
+            if skeleton_distance is not None
+            else ""
+        )
+        description = (
+            f"At intensity threshold {threshold:g}, segmented CT material is "
+            f"{'present' if mask_present else 'absent'} at the expected node and "
+            f"a skeleton centerline is {'within' if skeleton_near else 'outside'} "
+            f"the node rule radius.{distance_text}"
+        )
+        if status == "missing":
+            reasoning = (
+                "Neither material nor a nearby centerline sufficiently supports the "
+                "expected junction, so the node is classified as missing."
+            )
+        elif status == "disconnected":
+            if item.get("connectivity_reason") == "interior_skeleton_endpoint":
+                reasoning = (
+                    "A CT-derived centerline ends at this internal design junction "
+                    "instead of continuing through the lattice. This is reported in "
+                    "the combined Broken / disconnected category."
+                )
+            else:
+                component_id = item.get("component_id")
+                reasoning = (
+                    f"The node is supported by CT material, but skeleton component "
+                    f"{component_id if component_id is not None else 'unknown'} is "
+                    "separate from the main lattice network."
+                )
+        elif status == "uncertain":
+            reasoning = (
+                "The node lies near a crop boundary or has conflicting material and "
+                "centerline evidence, so it remains uncertain."
+            )
+        else:
+            reasoning = (
+                "The expected junction has CT material and nearby centerline support, "
+                "so no node defect rule was triggered."
+            )
+
+    return html.Div(
+        [
+            html.Div("CT INTERPRETATION", className="eyebrow"),
+            html.H3(f"What the CT scan shows for this {kind}"),
+            html.P(description),
+            html.H4("Why the model produced this result"),
+            html.P(reasoning),
+        ],
+        className="ct-reading",
+    )
+
+
+def _model_performance(analysis: dict[str, Any]) -> list[Any]:
+    """Build the aggregate CAD-validation metric cards."""
+
+    validation = analysis.get("validation")
+    overall = validation.get("overall") if validation else None
+    if not overall:
+        return [
+            html.Div(
+                [
+                    html.Div("MODEL PERFORMANCE", className="eyebrow"),
+                    html.H3("CAD validation unavailable"),
+                    html.P(
+                        "Accuracy, precision, recall, and F1 require a paired "
+                        "complete/defect CAD ground-truth set."
+                    ),
+                ],
+                className="performance-copy",
+            )
+        ]
+
+    metric_help = {
+        "accuracy": "All correctly classified validated elements",
+        "precision": "Flagged missing elements that are truly missing",
+        "recall": "True missing elements the model found",
+        "f1": "Balance of precision and recall",
+    }
+    return [
+        html.Div(
+            [
+                html.Div("WHOLE-MODEL VALIDATION", className="eyebrow"),
+                html.H3("Missing-element detection performance"),
+                html.P(
+                    "Micro-averaged across every validated strut and node using "
+                    "complete-versus-defect CAD as binary ground truth. Missing "
+                    "elements are rare, so interpret accuracy together with "
+                    "precision, recall, and F1."
+                ),
+            ],
+            className="performance-copy",
+        ),
+        html.Div(
+            [
+                html.Div(
+                    [
+                        html.Span(name.title(), className="metric-label"),
+                        html.Strong(
+                            f"{100 * float(overall[name]):.1f}%",
+                            className="metric-value",
+                        ),
+                        html.Span(metric_help[name], className="metric-help"),
+                    ],
+                    className=f"metric-card metric-{name}",
+                )
+                for name in ("accuracy", "precision", "recall", "f1")
+            ],
+            className="metric-grid",
+        ),
+        html.P(
+            f"{int(overall['true_positive']):,} true positives · "
+            f"{int(overall['true_negative']):,} true negatives · "
+            f"{int(overall['false_positive']):,} false positives · "
+            f"{int(overall['false_negative']):,} false negatives · "
+            f"{int(overall['total']):,} validated elements",
+            className="performance-footnote",
+        ),
+    ]
+
+
 def _evidence_details(
     analysis: dict[str, Any],
     selected: tuple[str, dict[str, Any]] | None,
@@ -1157,6 +1383,23 @@ def _evidence_details(
                     f"thin rule < {float(thresholds['thin_ratio']):.2f}×"
                 )
             )
+        elif status == "disconnected":
+            component_id = item.get("component_id")
+            if item.get("connectivity_reason") == "interior_skeleton_endpoint":
+                details.append(
+                    html.Span(
+                        "connectivity rule: CT skeleton terminates inside the "
+                        "expected strut"
+                    )
+                )
+            else:
+                details.append(
+                    html.Span(
+                        "connectivity rule: expected path belongs to "
+                        f"skeleton component {component_id if component_id is not None else 'unknown'}, "
+                        "not the main component"
+                    )
+                )
     else:
         details.extend(
             [
@@ -1194,6 +1437,7 @@ def _evidence_details(
                 f"threshold {float(analysis['meta']['threshold']):g}",
                 className="threshold-readout",
             ),
+            _ct_reading_narrative(analysis, selected),
             html.Span(
                 (
                     "The red line is a 3D projection; the gold diamond is where "
@@ -1888,6 +2132,10 @@ def create_app(default_dataset: str = "missing_struts") -> Dash:
                         id="lookup-feedback",
                         className="lookup-feedback",
                     ),
+                    html.Div(
+                        id="model-performance",
+                        className="model-performance",
+                    ),
                     dcc.Loading(
                         type="circle",
                         color="#55d6be",
@@ -1985,6 +2233,7 @@ def create_app(default_dataset: str = "missing_struts") -> Dash:
         Output("visible-summary", "children"),
         Output("selection-details", "children"),
         Output("threshold-readout", "children"),
+        Output("model-performance", "children"),
         Input("status-filters", "value"),
         Input("element-filters", "value"),
         Input("show-ct", "value"),
@@ -2045,6 +2294,7 @@ def create_app(default_dataset: str = "missing_struts") -> Dash:
                 ),
                 _selection_details(selected),
                 f"Threshold {active_threshold:g} · {source_label}",
+                _model_performance(analysis),
             )
         except Exception as exc:
             message = f"Could not load registered comparison: {exc}"
@@ -2053,6 +2303,7 @@ def create_app(default_dataset: str = "missing_struts") -> Dash:
                 html.Span(message, className="error-message"),
                 [html.Span(message, className="error-message")],
                 "Threshold unavailable",
+                _model_performance({}),
             )
 
     @app.callback(

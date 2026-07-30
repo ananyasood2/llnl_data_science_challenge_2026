@@ -213,8 +213,8 @@ The active cache contains candidate labels, not confirmed defects:
 
 | Element | Candidate counts |
 | --- | --- |
-| Struts | 16,170 healthy; 1,853 thick; 93 missing; 330 uncertain; 22 broken |
-| Nodes | 9,979 healthy; 217 uncertain; 8 missing; 2 broken |
+| Struts | 16,170 healthy; 1,853 thick; 93 missing; 330 uncertain; 22 broken / disconnected |
+| Nodes | 9,979 healthy; 217 uncertain; 8 missing; 2 broken / disconnected |
 
 The CAD-derived intentional-removal comparison gives missing-strut precision,
 recall, and F1 of approximately 0.968 (90 true positives, 3 false positives,

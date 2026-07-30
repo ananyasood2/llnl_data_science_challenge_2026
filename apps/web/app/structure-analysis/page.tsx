@@ -1,8 +1,3 @@
-import {
-  WorkflowSidebar,
-  buildWorkflowHref,
-  type WorkflowStep,
-} from "../components/WorkflowSidebar";
 import { getStructureViewerUrl } from "./viewerConfig";
 import { StructureViewerFrame } from "./StructureViewerFrame";
 
@@ -31,48 +26,26 @@ export default async function StructureAnalysisPage({
   const viewerUrl = getStructureViewerUrl(
     process.env.NEXT_PUBLIC_STRUCTURE_VIEWER_URL,
   );
-  const datasetId = getParam(params, "datasetId", "No dataset selected");
+  const datasetId = getParam(params, "datasetId", "");
   const threshold = getParam(params, "threshold", "Not provided");
-  const queryParams = new URLSearchParams(
-    Object.entries(params).flatMap(([key, value]) => {
-      if (Array.isArray(value)) {
-        return value[0] === undefined ? [] : [[key, value[0]]];
-      }
-
-      return value === undefined ? [] : [[key, value]];
-    }),
-  );
-  const workflowSteps: WorkflowStep[] = [
-    {
-      id: "project-dataset",
-      href: buildWorkflowHref("/project-dataset"),
-      state: "completed",
-    },
-    {
-      id: "segmentation",
-      href: buildWorkflowHref("/segmentation", queryParams),
-      state: "completed",
-    },
-    {
-      id: "structure-analysis",
-      href: buildWorkflowHref("/structure-analysis", queryParams),
-      state: "active",
-    },
-  ];
+  const usingDefaultDataset = datasetId.length === 0;
 
   return (
-    <main className="workspace">
-      <WorkflowSidebar steps={workflowSteps} />
-
+    <>
       <section className="content structure-content">
         <div className="eyebrow">Validation</div>
         <h1>3D structure analysis</h1>
+        {usingDefaultDataset ? (
+          <p className="default-dataset-indicator" role="status">
+            Default dataset: missing_struts
+          </p>
+        ) : null}
 
         <section className="dataset-panel structure-context" aria-label="Structure analysis context">
           <dl className="project-meta">
             <div>
               <dt>Dataset ID</dt>
-              <dd>{datasetId}</dd>
+              <dd>{usingDefaultDataset ? "missing_struts" : datasetId}</dd>
             </div>
             <div>
               <dt>Threshold</dt>
@@ -87,6 +60,6 @@ export default async function StructureAnalysisPage({
 
         <StructureViewerFrame viewerUrl={viewerUrl} />
       </section>
-    </main>
+    </>
   );
 }

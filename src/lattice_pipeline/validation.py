@@ -234,7 +234,7 @@ def evaluate_against_intentional_missing(
     nominal_graph: Mapping[str, Any],
     expected_strut_ids: Sequence[int],
 ) -> dict[str, Any]:
-    """Return exact ID-level precision/recall metrics for struts and nodes."""
+    """Return exact ID-level binary missing-element validation metrics."""
 
     expected_struts = {int(value) for value in expected_strut_ids}
     predicted_struts = {
@@ -254,10 +254,22 @@ def evaluate_against_intentional_missing(
         int(item["id"]) for item in result["nodes"] if item["status"] == "missing"
     }
 
-    def metrics(expected: set[int], predicted: set[int]) -> dict[str, Any]:
+    strut_universe = {
+        int(item["id"]) for item in nominal_graph["struts"]
+    } | {int(item["id"]) for item in result["struts"]}
+    node_universe = {
+        int(item["id"]) for item in nominal_graph["junctions"]
+    } | {int(item["id"]) for item in result["nodes"]}
+
+    def metrics(
+        expected: set[int],
+        predicted: set[int],
+        universe: set[int],
+    ) -> dict[str, Any]:
         true_positive = expected & predicted
         false_positive = predicted - expected
         false_negative = expected - predicted
+        true_negative = universe - (expected | predicted)
         precision = len(true_positive) / len(predicted) if predicted else 0.0
         recall = len(true_positive) / len(expected) if expected else 0.0
         f1 = (
@@ -265,12 +277,20 @@ def evaluate_against_intentional_missing(
             if precision + recall
             else 0.0
         )
+        accuracy = (
+            (len(true_positive) + len(true_negative)) / len(universe)
+            if universe
+            else 0.0
+        )
         return {
+            "total": len(universe),
             "expected": len(expected),
             "predicted": len(predicted),
             "true_positive": len(true_positive),
+            "true_negative": len(true_negative),
             "false_positive": len(false_positive),
             "false_negative": len(false_negative),
+            "accuracy": accuracy,
             "precision": precision,
             "recall": recall,
             "f1": f1,
@@ -279,10 +299,58 @@ def evaluate_against_intentional_missing(
             "false_negative_ids": sorted(false_negative),
         }
 
+    strut_metrics = metrics(expected_struts, predicted_struts, strut_universe)
+    node_metrics = metrics(expected_nodes, predicted_nodes, node_universe)
+    overall_counts = {
+        name: int(strut_metrics[name]) + int(node_metrics[name])
+        for name in (
+            "total",
+            "expected",
+            "predicted",
+            "true_positive",
+            "true_negative",
+            "false_positive",
+            "false_negative",
+        )
+    }
+    overall_precision = (
+        overall_counts["true_positive"]
+        / (overall_counts["true_positive"] + overall_counts["false_positive"])
+        if overall_counts["true_positive"] + overall_counts["false_positive"]
+        else 0.0
+    )
+    overall_recall = (
+        overall_counts["true_positive"]
+        / (overall_counts["true_positive"] + overall_counts["false_negative"])
+        if overall_counts["true_positive"] + overall_counts["false_negative"]
+        else 0.0
+    )
+    overall = {
+        **overall_counts,
+        "accuracy": (
+            (overall_counts["true_positive"] + overall_counts["true_negative"])
+            / overall_counts["total"]
+            if overall_counts["total"]
+            else 0.0
+        ),
+        "precision": overall_precision,
+        "recall": overall_recall,
+        "f1": (
+            2
+            * overall_precision
+            * overall_recall
+            / (overall_precision + overall_recall)
+            if overall_precision + overall_recall
+            else 0.0
+        ),
+    }
+
     return {
         "method": "complete_vs_defect_cad_midpoint_surface_distance",
-        "struts": metrics(expected_struts, predicted_struts),
-        "nodes": metrics(expected_nodes, predicted_nodes),
+        "scope": "binary_missing_element_detection_against_cad",
+        "overall": overall,
+        "struts": strut_metrics,
+        "nodes": node_metrics,
         "expected_strut_ids": sorted(expected_struts),
         "expected_missing_node_ids": sorted(expected_nodes),
     }

@@ -209,6 +209,37 @@ button.workflow-step {
   color: #8c9aab;
 }
 
+.workflow-nav {
+  display: grid;
+  gap: 0.45rem;
+  margin-top: 1.5rem;
+}
+
+.workflow-link {
+  display: flex;
+  align-items: center;
+  min-height: 2.4rem;
+  padding: 0.55rem 0.7rem;
+  color: #cbd8e8;
+  text-decoration: none;
+  border: 1px solid transparent;
+  border-radius: 0.55rem;
+  font-size: 0.86rem;
+  font-weight: 720;
+}
+
+.workflow-link:hover {
+  color: #ffffff;
+  background: rgb(255 255 255 / 6%);
+  border-color: #315578;
+}
+
+.workflow-link.active {
+  color: #ffffff;
+  background: rgb(37 99 235 / 28%);
+  border-color: #4b7ed9;
+}
+
 .status-pill,
 .state {
   display: inline-flex;
@@ -309,6 +340,36 @@ h1 {
   border-radius: 0.8rem;
   font-size: 0.86rem;
   font-weight: 670;
+}
+
+.empty-state {
+  display: grid;
+  gap: 1rem;
+  max-width: 46rem;
+  margin-top: 2rem;
+}
+
+.empty-state p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.empty-state .primary-link {
+  width: fit-content;
+}
+
+.default-dataset-indicator {
+  display: inline-flex;
+  width: fit-content;
+  margin: 1.25rem 0 0;
+  padding: 0.36rem 0.65rem;
+  color: #27466f;
+  background: #eaf2ff;
+  border: 1px solid #cbdcfa;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 730;
 }
 
 .foundation-grid {
@@ -1005,6 +1066,42 @@ input[type="file"] {
   color: #b42318;
 }
 
+.defect-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  font-size: 0.82rem;
+}
+
+.defect-legend span {
+  align-items: center;
+  display: inline-flex;
+  gap: 6px;
+}
+
+.defect-swatch {
+  border-radius: 2px;
+  display: inline-block;
+  height: 10px;
+  width: 10px;
+}
+
+.defect-missing {
+  background: #e74c3c;
+}
+
+.defect-uncertain {
+  background: #f59e0b;
+}
+
+.defect-thin {
+  background: #3b82f6;
+}
+
+.defect-thick {
+  background: #8b5cf6;
+}
+
 .slice-frame {
   position: relative;
   width: min(100%, 30rem);
@@ -1383,6 +1480,29 @@ input[type="file"] {
     font-size: 0.76rem;
     line-height: 1.2;
     white-space: normal;
+  }
+
+  .rail {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.8rem;
+    align-items: center;
+    padding: 1rem;
+  }
+
+  .workflow-nav {
+    grid-column: 1 / -1;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.35rem;
+    margin-top: 0.2rem;
+  }
+
+  .workflow-link {
+    justify-content: center;
+    min-height: 2.2rem;
+    padding: 0.45rem 0.4rem;
+    text-align: center;
+    font-size: 0.74rem;
   }
 
   .mark,

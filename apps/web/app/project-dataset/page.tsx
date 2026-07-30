@@ -1,21 +1,23 @@
 "use client";
 
-import { ChangeEvent, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  WorkflowSidebar,
-  buildWorkflowHref,
-  type WorkflowStep,
-} from "../components/WorkflowSidebar";
-import {
-  GeometryMetadata,
   formatGeometryBounds,
   formatGeometryDimensions,
   formatStlFormat,
 } from "./geometryMetadata";
-
-type DatasetSlotId = "ctTiffStack" | "npyVolume" | "stlCad" | "graphJson";
-type IntakeStatus = "idle" | "loading" | "valid" | "invalid";
+import {
+  DatasetSlotId,
+  IntakeDimensions,
+  IntakeResult,
+  SlotState,
+  initialSlotStates,
+  namesFromFiles,
+  slotFailureState,
+  slotLoadingState,
+  slotSuccessState,
+} from "./uploadState";
 
 type ProjectHeaderProps = {
   projectName: string;
@@ -32,45 +34,10 @@ type DatasetFileSlot = {
   multiple?: boolean;
 };
 
-type IntakeDimensions = {
-  x?: number;
-  y?: number;
-  z?: number;
-};
-
-type IntakeRange = {
-  min: number;
-  max: number;
-};
-
-type IntakeResult = {
-  valid: boolean;
-  dataset_id?: string | null;
-  slot?: DatasetSlotId;
-  file_names?: string[];
-  generated_file_names?: string[];
-  fileType?: string;
-  dimensions?: IntakeDimensions;
-  intensity_range?: IntakeRange;
-  geometry_metadata?: GeometryMetadata | null;
-  embedded_metadata?: Record<string, unknown> | null;
-  voxel_size_micron?: number | null;
-  warnings?: string[];
-  errors?: string[];
-  demo_mode?: boolean;
-};
-
-type SlotState = {
-  status: IntakeStatus;
-  files: string[];
-  result?: IntakeResult;
-  error?: string;
-};
-
 type DatasetUploadPanelProps = {
   files: DatasetFileSlot[];
   slotStates: Record<DatasetSlotId, SlotState>;
-  onFileChange: (slotId: DatasetSlotId, files: FileList | null) => void;
+  onFileChange: (slotId: DatasetSlotId, files: File[]) => void;
 };
 
 type VoxelSizeInputProps = {
@@ -139,13 +106,6 @@ const datasetFiles: DatasetFileSlot[] = [
     accept: ".json,.graphml",
   },
 ];
-
-const initialSlotStates: Record<DatasetSlotId, SlotState> = {
-  ctTiffStack: { status: "idle", files: [] },
-  npyVolume: { status: "idle", files: [] },
-  stlCad: { status: "idle", files: [] },
-  graphJson: { status: "idle", files: [] },
-};
 
 const sampleDesignOptions = ["350 micron strut"];
 const relativeDensityOptions = ["10"];
@@ -275,9 +235,11 @@ function DatasetUploadPanel({
                 type="file"
                 accept={file.accept}
                 multiple={file.multiple}
-                onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                  onFileChange(file.id, event.target.files)
-                }
+                onChange={(event: ChangeEvent<HTMLInputElement>) => {
+                  const selectedFiles = Array.from(event.currentTarget.files ?? []);
+                  event.currentTarget.value = "";
+                  onFileChange(file.id, selectedFiles);
+                }}
               />
               {state.files.length > 0 ? (
                 <span className="file-summary">{state.files.join(", ")}</span>
@@ -503,6 +465,12 @@ function StartAnalysisButton({
 export default function ProjectDatasetPage() {
   const router = useRouter();
   const [slotStates, setSlotStates] = useState(initialSlotStates);
+  const uploadSequenceBySlot = useRef<Record<DatasetSlotId, number>>({
+    ctTiffStack: 0,
+    npyVolume: 0,
+    stlCad: 0,
+    graphJson: 0,
+  });
   const [voxelSizeMicron, setVoxelSizeMicron] = useState("");
   const [voxelSizeSource, setVoxelSizeSource] =
     useState<VoxelSizeInputProps["source"]>("missing");
@@ -583,67 +551,9 @@ export default function ProjectDatasetPage() {
   const requiredItemsPassed = checklistItems
     .filter((item) => !item.optional)
     .every((item) => item.passed);
-  const activeDatasetId =
-    slotStates.ctTiffStack.result?.dataset_id ??
-    slotStates.npyVolume.result?.dataset_id ??
-    null;
-  const activeDimensions =
-    slotStates.ctTiffStack.result?.dimensions ??
-    slotStates.npyVolume.result?.dimensions;
-  const activeDatasetName =
-    slotStates.ctTiffStack.files[0] ??
-    slotStates.npyVolume.files[0] ??
-    "validated dataset";
-  const downstreamParams =
-    activeDatasetId && activeDimensions && requiredItemsPassed && !anyLoading
-      ? new URLSearchParams({
-          dataset: activeDatasetName,
-          projectId: "Pending",
-          datasetId: activeDatasetId,
-          scaleUnit: voxelSizeKnown ? "micron" : "voxel",
-          x: String(activeDimensions.x ?? "unknown"),
-          y: String(activeDimensions.y ?? "unknown"),
-          z: String(activeDimensions.z ?? "unknown"),
-        })
-      : null;
-
-  if (
-    downstreamParams &&
-    voxelSizeKnown &&
-    hasPositiveVoxelSize(voxelSizeMicron)
-  ) {
-    downstreamParams.set("voxelSizeMicron", voxelSizeMicron);
-  } else if (
-    downstreamParams &&
-    voxelSizeKnown &&
-    typeof detectedVoxelSize === "number"
-  ) {
-    downstreamParams.set("voxelSizeMicron", String(detectedVoxelSize));
-  }
-
-  const downstreamHref = downstreamParams
-    ? buildWorkflowHref("/segmentation", downstreamParams)
-    : null;
-  const workflowSteps: WorkflowStep[] = [
-    {
-      id: "project-dataset",
-      href: buildWorkflowHref("/project-dataset"),
-      state: "active",
-    },
-    {
-      id: "segmentation",
-      href: downstreamHref,
-      state: downstreamHref ? "available" : "locked",
-    },
-    {
-      id: "structure-analysis",
-      href: null,
-      state: "locked",
-    },
-  ];
-
-  async function handleFileChange(slotId: DatasetSlotId, fileList: FileList | null) {
-    const selectedFiles = Array.from(fileList ?? []);
+  async function handleFileChange(slotId: DatasetSlotId, selectedFiles: File[]) {
+    const requestId = uploadSequenceBySlot.current[slotId] + 1;
+    uploadSequenceBySlot.current[slotId] = requestId;
 
     if (selectedFiles.length === 0) {
       setSlotStates((current) => ({
@@ -661,7 +571,7 @@ export default function ProjectDatasetPage() {
         ...current,
         [slotId]: {
           status: "invalid",
-          files: selectedFiles.map((file) => file.name),
+          files: namesFromFiles(selectedFiles),
           error: "Upload and validate the CT TIFF stack before adding a .npy override.",
         },
       }));
@@ -670,10 +580,7 @@ export default function ProjectDatasetPage() {
 
     setSlotStates((current) => ({
       ...current,
-      [slotId]: {
-        status: "loading",
-        files: selectedFiles.map((file) => file.name),
-      },
+      [slotId]: slotLoadingState(selectedFiles),
     }));
 
     try {
@@ -681,32 +588,24 @@ export default function ProjectDatasetPage() {
         slotId,
         selectedFiles,
         slotId === "npyVolume" ? expectedDimensions : undefined,
-        slotId === "npyVolume" || slotId === "stlCad" ? tiffDatasetId : undefined,
+        slotId === "npyVolume" || slotId === "stlCad" || slotId === "graphJson"
+          ? tiffDatasetId
+          : undefined,
       );
 
-      setSlotStates((current) => ({
-        ...current,
-        [slotId]: {
-          status: result.valid ? "valid" : "invalid",
-          files: selectedFiles.map((file) => file.name),
-          result,
-          error: result.valid
-            ? undefined
-            : "Data intake rejected this file. Review the validation details.",
-        },
-      }));
+      if (uploadSequenceBySlot.current[slotId] === requestId) {
+        setSlotStates((current) => ({
+          ...current,
+          [slotId]: slotSuccessState(selectedFiles, result),
+        }));
+      }
     } catch (error) {
-      setSlotStates((current) => ({
-        ...current,
-        [slotId]: {
-          status: "invalid",
-          files: selectedFiles.map((file) => file.name),
-          error:
-            error instanceof Error
-              ? error.message
-              : "Dataset intake failed for this upload slot.",
-        },
-      }));
+      if (uploadSequenceBySlot.current[slotId] === requestId) {
+        setSlotStates((current) => ({
+          ...current,
+          [slotId]: slotFailureState(selectedFiles, error),
+        }));
+      }
     }
   }
 
@@ -799,6 +698,13 @@ export default function ProjectDatasetPage() {
       datasetId,
       jobId: jobPayload.job_id,
     });
+    const graphReferenceFileName =
+      slotStates.graphJson.result?.graph_reference_file_name ??
+      slotStates.graphJson.result?.file_names?.[0];
+
+    if (graphReferenceFileName) {
+      params.set("graphReference", graphReferenceFileName);
+    }
 
     if (voxelSizeKnown) {
       params.set(
@@ -823,9 +729,7 @@ export default function ProjectDatasetPage() {
   }
 
   return (
-    <main className="workspace">
-      <WorkflowSidebar steps={workflowSteps} />
-
+    <>
       <section className="content dataset-content">
         <div className="eyebrow">What am I analyzing?</div>
         <h1>Project and dataset intake</h1>
@@ -881,6 +785,6 @@ export default function ProjectDatasetPage() {
           />
         </div>
       </section>
-    </main>
+    </>
   );
 }

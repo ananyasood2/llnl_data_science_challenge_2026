@@ -58,6 +58,24 @@ def test_display_axis_remapping_control_is_not_in_the_dashboard() -> None:
 
     assert "axis-order" not in identifiers
     assert {"x-axis-max", "y-axis-max", "z-axis-max"} <= identifiers
+    assert "model-performance" in identifiers
+
+
+def test_connectivity_failures_share_one_dashboard_filter() -> None:
+    options = dashboard._filter_options()
+
+    assert [option["value"] for option in options] == [
+        "missing",
+        "disconnected",
+        "uncertain",
+        "thin",
+        "thick",
+        "healthy",
+    ]
+    connectivity = next(
+        option for option in options if option["value"] == "disconnected"
+    )
+    assert "Broken / disconnected" in connectivity["label"].children
 
 
 def test_recent_threshold_analyses_are_reused(monkeypatch) -> None:

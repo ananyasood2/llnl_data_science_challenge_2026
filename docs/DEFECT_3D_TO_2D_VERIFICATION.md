@@ -209,7 +209,7 @@ design struts appear absent. It does not provide:
 
 The classifier's `_near_crop` check uses the full downsampled array bounds, not
 the observed object/cut boundary. Crop-created endpoints can therefore still be
-reported as broken unless another heuristic catches them.
+reported as broken / disconnected unless another heuristic catches them.
 
 ## Downsampling audit
 
@@ -304,7 +304,8 @@ For a generated defect record:
 
 - missing-strut location is a sampled graph point selected using skeleton
   distance;
-- broken-strut location is a nearby skeleton endpoint;
+- broken / disconnected location is a nearby internal skeleton endpoint or
+  secondary-component path;
 - thin/thick location defaults to the expected edge midpoint;
 - node location is the aligned graph node;
 - `slice_index` is rounded Z in the current analysis coordinates and later
@@ -346,8 +347,7 @@ This result is contradicted by explicit design ground truth.
 | --- | --- | --- |
 | Missing strut | Contradicted in active cache | Invalid threshold misses all 93 CAD removals |
 | Missing node | Contradicted/incomplete | Invalid cache reports none; node semantics need explicit definition |
-| Broken strut | Questionable | Downsampled mask/skeleton only; no raw CT or threshold persistence |
-| Disconnected strut | Questionable | Skeleton component rule only; no crop-boundary exclusion |
+| Broken / disconnected strut | Questionable | Internal skeleton endpoint or secondary-component rule only; no crop-boundary exclusion |
 | Thin/thick strut | Unsupported | Physical spacing is estimated and anisotropy unknown |
 | Boundary uncertain | Rule-based interpretation | Heuristic face downgrade, no explicit cut-region model |
 | Severity/rule strength | Uncalibrated decision-margin output; null for healthy elements | No empirical calibration or evidence-status model |
@@ -365,7 +365,7 @@ The repaired system must keep these categories separate:
   distance/connectivity, graph-tube occupancy, boundary distance, and
   measurements at each tested threshold.
 - **Rule-based classification:** deterministic cutoffs and the decision table.
-- **Interpretation:** missing, broken, thin, disconnected, threshold artifact,
+- **Interpretation:** missing, broken / disconnected, thin, threshold artifact,
   skeleton artifact, registration problem, or boundary-created endpoint.
 - **Uncertainty:** missing spacing, unverified registration, threshold
   sensitivity, crop proximity, low resolution, and conflicting signals.
@@ -415,7 +415,7 @@ The current serialized result mixes these categories.
 ### Phase 4: evidence-gated classification
 
 - Update `src/lattice_pipeline/defects.py`, `align.py`, and `validation.py`.
-- Add healthy, broken, segmentation-artifact, skeleton-artifact,
+- Add healthy, broken / disconnected, segmentation-artifact, skeleton-artifact,
   crop-boundary, and registration-error tests.
 
 ### Phase 5: API and UI
@@ -445,7 +445,7 @@ The repair plan includes all requested synthetic cases:
 5. axis permutation detection;
 6. axis flip detection;
 7. healthy strut;
-8. internal broken strut;
+8. internal broken / disconnected strut;
 9. threshold/segmentation artifact;
 10. skeleton-only interruption;
 11. crop-boundary endpoint;
@@ -489,7 +489,7 @@ recorded as a baseline failure, not presented as a Phase 1 repair.
 - Provenance of the configured CAD cube symmetry.
 - Exact intended high-Y cut/exclusion bounds and required safety buffer.
 - Candidate-level threshold persistence.
-- Full-resolution CT support for every current missing/broken/disconnected
+- Full-resolution CT support for every current missing and broken / disconnected
   prediction.
 - Definitions and ground truth for a “missing node.”
 

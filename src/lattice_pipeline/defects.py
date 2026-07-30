@@ -20,7 +20,7 @@ from scipy import ndimage
 from scipy.spatial import cKDTree
 
 STATUS_VALUES = frozenset(
-    {"healthy", "missing", "thin", "thick", "broken", "disconnected", "uncertain"}
+    {"healthy", "missing", "thin", "thick", "disconnected", "uncertain"}
 )
 
 
@@ -30,7 +30,7 @@ class DefectConfig:
 
     ``presence_radius_vox`` is the maximum centerline-to-skeleton distance used
     to say that a design sample is present.  It absorbs modest registration and
-    skeletonisation error.  Missing and broken decisions use fractions of
+    skeletonisation error. Missing and continuity decisions use fractions of
     samples along a design strut, excluding a small region at either node.
 
     A design thickness should preferably be supplied on each strut as
@@ -48,8 +48,8 @@ class DefectConfig:
     node_presence_radius_vox: float = 7.0
     missing_present_fraction: float = 0.22
     uncertain_missing_margin: float = 0.08
-    broken_min_present_fraction: float = 0.25
-    broken_max_present_fraction: float = 0.78
+    continuity_min_present_fraction: float = 0.25
+    continuity_max_present_fraction: float = 0.78
     endpoint_to_strut_radius_vox: float = 7.0
     endpoint_to_node_radius_vox: float = 7.0
     crop_margin_vox: float = 5.0
@@ -69,8 +69,8 @@ class DefectConfig:
         for name in (
             "missing_present_fraction",
             "uncertain_missing_margin",
-            "broken_min_present_fraction",
-            "broken_max_present_fraction",
+            "continuity_min_present_fraction",
+            "continuity_max_present_fraction",
         ):
             value = float(getattr(self, name))
             if not 0 <= value <= 1:
@@ -132,7 +132,7 @@ def _design_thickness_um(strut: Mapping[str, Any], cfg: DefectConfig) -> float |
 
 
 def _severity(status: str, magnitude: float = 0.0) -> str:
-    if status in {"missing", "broken", "disconnected"}:
+    if status in {"missing", "disconnected"}:
         return "high"
     if status in {"thin", "thick"}:
         return "high" if magnitude >= 0.35 else "medium"
@@ -355,6 +355,7 @@ def classify_defects(
 
         status = "healthy"
         rule_strength: float | None = None
+        connectivity_reason: str | None = None
         location = midpoint
         magnitude = 0.0
 
@@ -368,6 +369,7 @@ def classify_defects(
             # A present centerline belonging to any non-largest 26-connected
             # component is, by definition, a disconnected fragment.
             status = "disconnected"
+            connectivity_reason = "secondary_skeleton_component"
             rule_strength = float(
                 np.clip(0.65 + 0.33 * present_fraction, 0, 0.98)
             )
@@ -384,16 +386,30 @@ def classify_defects(
             location = interior_endpoint if interior_endpoint is not None else midpoint
         elif (
             interior_endpoint is not None
-            and cfg.broken_min_present_fraction <= present_fraction <= cfg.broken_max_present_fraction
+            and cfg.continuity_min_present_fraction
+            <= present_fraction
+            <= cfg.continuity_max_present_fraction
         ):
-            status = "broken"
+            # An internal CT-skeleton endpoint and a secondary connected
+            # component are both manifestations of the same continuity
+            # failure. Keep one public category and preserve the measured
+            # mechanism in ``connectivity_reason``.
+            status = "disconnected"
+            connectivity_reason = "interior_skeleton_endpoint"
             rule_strength = float(
                 np.clip(
                     0.6
                     + 0.35
                     * min(
-                        (present_fraction - cfg.broken_min_present_fraction)
-                        / max(cfg.broken_max_present_fraction - cfg.broken_min_present_fraction, 1e-6),
+                        (
+                            present_fraction
+                            - cfg.continuity_min_present_fraction
+                        )
+                        / max(
+                            cfg.continuity_max_present_fraction
+                            - cfg.continuity_min_present_fraction,
+                            1e-6,
+                        ),
                         1,
                     ),
                     0,
@@ -445,6 +461,7 @@ def classify_defects(
                     else None
                 ),
                 "component_id": component_id,
+                "connectivity_reason": connectivity_reason,
                 "measured_thickness_um": (
                     round(measured_um, 3) if measured_um is not None else None
                 ),
@@ -519,12 +536,14 @@ def classify_defects(
                             if thickness_ratio is not None
                             else None
                         ),
+                        "component_id": component_id,
+                        "connectivity_reason": connectivity_reason,
                     },
                 )
             )
 
     # Node state uses the same skeleton index, but explicitly exempts legitimate
-    # degree-one design boundary nodes from the broken-endpoint signal.
+    # degree-one design boundary nodes from the internal-endpoint signal.
     output_nodes: list[dict[str, Any]] = []
     for source in nodes_in:
         item = dict(source)
@@ -549,6 +568,7 @@ def classify_defects(
 
         status = "healthy"
         rule_strength: float | None = None
+        connectivity_reason: str | None = None
         # Some graph files retain geometric helper/corner junctions that are
         # not referenced by any design strut. They are not expected material.
         if degree == 0:
@@ -569,9 +589,16 @@ def classify_defects(
             )
         elif component_id is not None and component_id != main_label and main_label:
             status = "disconnected"
+            connectivity_reason = "secondary_skeleton_component"
             rule_strength = 0.9
         elif degree >= 2 and endpoint_distance <= cfg.endpoint_to_node_radius_vox:
-            status = "uncertain" if _near_crop(point, mask.shape, cfg.crop_margin_vox) else "broken"
+            status = (
+                "uncertain"
+                if _near_crop(point, mask.shape, cfg.crop_margin_vox)
+                else "disconnected"
+            )
+            if status == "disconnected":
+                connectivity_reason = "interior_skeleton_endpoint"
             rule_strength = 0.5 if status == "uncertain" else float(
                 np.clip(0.95 - 0.4 * endpoint_distance / cfg.endpoint_to_node_radius_vox, 0.55, 0.95)
             )
@@ -588,6 +615,7 @@ def classify_defects(
                     else None
                 ),
                 "component_id": component_id,
+                "connectivity_reason": connectivity_reason,
                 "mask_present": mask_present,
                 "skeleton_near": skeleton_near,
                 "skeleton_distance_vox": (
@@ -637,6 +665,8 @@ def classify_defects(
                             if np.isfinite(endpoint_distance)
                             else None
                         ),
+                        "component_id": component_id,
+                        "connectivity_reason": connectivity_reason,
                     },
                 )
             )

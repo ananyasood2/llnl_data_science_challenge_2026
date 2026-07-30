@@ -6,6 +6,7 @@ from app.app import (
     _evidence_details,
     _evidence_focus,
     _inspection_figure,
+    _model_performance,
     _nearest_element,
     _polyline_plane_intersections,
     _record_intersects_axis_limits,
@@ -20,7 +21,13 @@ from app.app import (
 
 
 def _analysis_fixture():
-    statuses = ("healthy", "thin", "thick", "missing")
+    statuses = (
+        "healthy",
+        "thin",
+        "thick",
+        "missing",
+        "disconnected",
+    )
     return {
         "meta": {"cache_fingerprint": "test-fixture", "threshold": 0.5},
         "struts": [
@@ -28,6 +35,12 @@ def _analysis_fixture():
                 "id": index,
                 "status": status,
                 "rule_strength": None if status == "healthy" else 0.9,
+                "component_id": 2 if status == "disconnected" else 1,
+                "connectivity_reason": (
+                    "secondary_skeleton_component"
+                    if status == "disconnected"
+                    else None
+                ),
                 "polyline": [[index, 0, 0], [index, 1, 1]],
             }
             for index, status in enumerate(statuses)
@@ -53,11 +66,21 @@ def _analysis_fixture():
     }
 
 
+def _component_text(component):
+    if component is None:
+        return ""
+    if isinstance(component, str):
+        return component
+    if isinstance(component, (list, tuple)):
+        return " ".join(_component_text(child) for child in component)
+    return _component_text(getattr(component, "children", None))
+
+
 def test_requested_statuses_render_as_full_struts_and_nodes():
     figure = _inspection_figure(
         "missing_struts",
         _analysis_fixture(),
-        ["healthy", "thin", "thick", "missing"],
+        ["healthy", "thin", "thick", "missing", "disconnected"],
         ["struts", "nodes"],
         False,
         None,
@@ -71,10 +94,17 @@ def test_requested_statuses_render_as_full_struts_and_nodes():
         "Thick struts",
         "Missing struts",
         "Missing nodes",
+        "Broken / disconnected struts",
     }
     missing_strut = next(trace for trace in figure.data if trace.name == "Missing struts")
     assert missing_strut.mode == "lines"
     assert missing_strut.line.dash == "dot"
+    disconnected_strut = next(
+        trace
+        for trace in figure.data
+        if trace.name == "Broken / disconnected struts"
+    )
+    assert disconnected_strut.line.dash == "longdash"
 
 
 def test_status_and_element_filters_are_independent():
@@ -275,7 +305,7 @@ def test_axis_maximum_filters_rendered_elements_and_missing_counts():
     figure = _inspection_figure(
         "missing_struts",
         analysis,
-        ["healthy", "thin", "thick", "missing"],
+        ["healthy", "thin", "thick", "missing", "disconnected"],
         ["struts", "nodes"],
         False,
         None,
@@ -284,7 +314,7 @@ def test_axis_maximum_filters_rendered_elements_and_missing_counts():
     )
     summary = _visible_summary(
         analysis,
-        ["healthy", "thin", "thick", "missing"],
+        ["healthy", "thin", "thick", "missing", "disconnected"],
         ["struts", "nodes"],
         axis_maxima,
     )
@@ -293,12 +323,15 @@ def test_axis_maximum_filters_rendered_elements_and_missing_counts():
     assert summary[0].children == "3 struts · 2 nodes visible"
     assert summary[2].children == "0 missing struts · 1 missing nodes detected"
     assert summary[4].children == (
+        "0 broken / disconnected struts · 0 broken / disconnected nodes"
+    )
+    assert summary[6].children == (
         "0 boundary / uncertain struts · 0 boundary / uncertain nodes"
     )
-    assert summary[6].children == "1 thin struts · 0 thin nodes"
-    assert summary[8].children == "1 thick struts · 0 thick nodes"
-    assert summary[10].children == "1 healthy struts · 1 healthy nodes"
-    assert summary[12].children == "3 total flagged elements"
+    assert summary[8].children == "1 thin struts · 0 thin nodes"
+    assert summary[10].children == "1 thick struts · 0 thick nodes"
+    assert summary[12].children == "1 healthy struts · 1 healthy nodes"
+    assert summary[14].children == "3 total flagged elements"
 
 
 def test_summary_counts_all_statuses_even_when_a_status_is_filtered_out():
@@ -314,12 +347,73 @@ def test_summary_counts_all_statuses_even_when_a_status_is_filtered_out():
     assert summary[0].children == "1 struts · 0 nodes visible"
     assert summary[2].children == "1 missing struts · 1 missing nodes detected"
     assert summary[4].children == (
+        "1 broken / disconnected struts · 0 broken / disconnected nodes"
+    )
+    assert summary[6].children == (
         "1 boundary / uncertain struts · 0 boundary / uncertain nodes"
     )
-    assert summary[6].children == "1 thin struts · 0 thin nodes"
-    assert summary[8].children == "1 thick struts · 0 thick nodes"
-    assert summary[10].children == "0 healthy struts · 1 healthy nodes"
-    assert summary[12].children == "5 total flagged elements"
+    assert summary[8].children == "1 thin struts · 0 thin nodes"
+    assert summary[10].children == "1 thick struts · 0 thick nodes"
+    assert summary[12].children == "0 healthy struts · 1 healthy nodes"
+    assert summary[14].children == "6 total flagged elements"
+
+
+def test_disconnected_strut_evidence_identifies_secondary_component():
+    analysis = _analysis_fixture()
+    item = analysis["struts"][4]
+
+    details = _evidence_details(analysis, ("strut", item))
+    text = _component_text(details)
+
+    assert "Broken / disconnected candidate" in text
+    assert "skeleton component 2" in text
+    assert "separate from the main lattice network" in text
+
+
+def test_ct_reading_explains_missing_strut_from_measured_support():
+    analysis = _analysis_fixture()
+    item = analysis["struts"][3]
+    item.update(
+        {
+            "present_fraction": 0.08,
+            "mask_material_fraction": 0.05,
+            "skeleton_support_fraction": 0.04,
+            "decision_thresholds": {"missing_present_fraction": 0.15},
+        }
+    )
+
+    text = _component_text(_evidence_details(analysis, ("strut", item)))
+
+    assert "What the CT scan shows for this strut" in text
+    assert "8.0% path support" in text
+    assert "below the 15.0% missing-material cutoff" in text
+
+
+def test_whole_model_performance_panel_formats_all_four_percentages():
+    analysis = {
+        "validation": {
+            "overall": {
+                "accuracy": 0.98,
+                "precision": 0.8,
+                "recall": 0.75,
+                "f1": 0.7742,
+                "true_positive": 6,
+                "true_negative": 92,
+                "false_positive": 1,
+                "false_negative": 2,
+                "total": 101,
+            }
+        }
+    }
+
+    panel = _model_performance(analysis)
+    text = _component_text(panel)
+
+    assert "Accuracy" in text and "98.0%" in text
+    assert "Precision" in text and "80.0%" in text
+    assert "Recall" in text and "75.0%" in text
+    assert "F1" in text and "77.4%" in text
+    assert "101 validated elements" in text
 
 
 def test_strut_crossing_axis_limit_is_still_in_the_displayed_region():

@@ -7,7 +7,7 @@ import re
 import struct
 import uuid
 import zlib
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from functools import lru_cache
 from io import BytesIO
 from pathlib import Path
@@ -21,6 +21,10 @@ from pydantic import BaseModel, ConfigDict, Field
 from skimage.filters import threshold_otsu
 from skimage.measure import label
 from skimage.morphology import skeletonize
+from scipy import ndimage
+
+from lattice_pipeline.defects import DefectConfig, classify_defects
+from lattice_pipeline.io import load_design_graph
 
 from app.core.config import get_settings
 from app.schemas.datasets import (
@@ -49,6 +53,14 @@ class UploadedDatasetFile(NamedTuple):
 
 SliceAxis = Literal["x", "y", "z"]
 SliceView = Literal["original", "segmentation", "skeleton"]
+DefectJobStatus = Literal["not_run", "running", "complete", "failed"]
+DefectCategory = Literal["missing", "uncertain", "thin", "thick"]
+DEFECT_CATEGORY_COLORS: dict[str, tuple[int, int, int]] = {
+    "missing": (231, 76, 60),
+    "uncertain": (245, 158, 11),
+    "thin": (59, 130, 246),
+    "thick": (139, 92, 246),
+}
 
 
 class ThresholdPreviewRequest(BaseModel):
@@ -183,7 +195,18 @@ class ArtifactManifestResponse(BaseModel):
 
     dataset_id: str
     project_id: str
+    graph_reference_available: bool = False
+    graph_reference_file_name: str | None = None
     artifacts: dict[str, ArtifactSummary]
+
+
+class DatasetManifestResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    dataset_id: str
+    graph_reference_available: bool = False
+    graph_reference_file_name: str | None = None
+    assets: dict[str, list[str]] = Field(default_factory=dict)
 
 
 class VoxelProbeRequest(BaseModel):
@@ -203,6 +226,25 @@ class VoxelProbeResponse(BaseModel):
     z: int
     intensity: float
     mask_value: int
+    defect_category: str | None = None
+    defect_status: Literal["none", "flagged", "not_run"] = "not_run"
+
+
+class DefectSummaryResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    dataset_id: str
+    status: DefectJobStatus
+    total_flagged_elements: int = 0
+    total_flagged_voxels: int = 0
+    category_counts: dict[str, int] = Field(default_factory=dict)
+    reference_available: bool = False
+    reference_message: str
+    defect_artifact_path: str | None = None
+    summary_path: str | None = None
+    error: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
 
 
 @router.post("/intake", response_model=DatasetIntakeResponse)
@@ -278,12 +320,39 @@ async def intake_dataset(
             slot,
             uploaded_files,
             generated_files,
+            response=response,
             existing_dataset_id=dataset_id,
         )
-        return response.model_copy(update={"dataset_id": persisted_dataset_id})
+        manifest = _load_dataset_manifest(
+            get_settings().upload_storage_root / persisted_dataset_id
+        )
+        return response.model_copy(
+            update={
+                "dataset_id": persisted_dataset_id,
+                "graph_reference_available": manifest.get(
+                    "graph_reference_available", False
+                ),
+                "graph_reference_file_name": manifest.get("graph_reference_file_name"),
+            }
+        )
     finally:
         for upload in files:
             await upload.close()
+
+
+@router.get("/{dataset_id}/manifest", response_model=DatasetManifestResponse)
+async def get_dataset_manifest(dataset_id: str) -> DatasetManifestResponse:
+    """Return persisted dataset intake metadata."""
+    dataset_dir = _get_existing_dataset_dir(dataset_id)
+    manifest = _load_dataset_manifest(dataset_dir)
+    graph_path = _find_graph_json_path(dataset_dir)
+    assets = manifest.get("assets")
+    return DatasetManifestResponse(
+        dataset_id=dataset_id,
+        graph_reference_available=graph_path is not None,
+        graph_reference_file_name=graph_path.name if graph_path else None,
+        assets=assets if isinstance(assets, dict) else {},
+    )
 
 
 @router.get("/{dataset_id}/slices/{axis}/{index}")
@@ -332,6 +401,92 @@ async def get_dataset_slice(
     )
 
 
+@router.post("/{dataset_id}/defect-jobs", response_model=DefectSummaryResponse)
+async def start_defect_detection_job(dataset_id: str) -> DefectSummaryResponse:
+    """Run reference-aware defect detection from persisted segmentation/skeleton artifacts."""
+    dataset_dir = _get_existing_dataset_dir(dataset_id)
+    job = _base_defect_record(dataset_id, "running")
+    _write_json(dataset_dir / "defect_job.json", job)
+
+    try:
+        result, summary = _run_defect_detection_agent(dataset_dir, dataset_id)
+        job.update(
+            {
+                "status": "complete",
+                "total_flagged_elements": summary["total_flagged_elements"],
+                "total_flagged_voxels": summary["total_flagged_voxels"],
+                "category_counts": summary["category_counts"],
+                "reference_available": summary["reference_available"],
+                "reference_message": summary["reference_message"],
+                "defect_artifact_path": "defects.json",
+                "summary_path": "defect_summary.json",
+                "error": None,
+            }
+        )
+        _write_json(dataset_dir / "defects.json", result)
+        _write_json(dataset_dir / "defect_summary.json", summary)
+    except Exception as exc:
+        job.update(
+            {
+                "status": "failed",
+                "error": str(exc),
+                "reference_available": _find_graph_json_path(dataset_dir) is not None,
+                "reference_message": str(exc),
+            }
+        )
+
+    job["updated_at"] = _utc_now()
+    _write_json(dataset_dir / "defect_job.json", job)
+    return DefectSummaryResponse.model_validate(job)
+
+
+@router.get("/{dataset_id}/defect-jobs/latest", response_model=DefectSummaryResponse)
+async def get_latest_defect_job(dataset_id: str) -> DefectSummaryResponse:
+    dataset_dir = _get_existing_dataset_dir(dataset_id)
+    job_path = dataset_dir / "defect_job.json"
+    if not job_path.is_file():
+        return _not_run_defect_response(dataset_id, dataset_dir)
+    return DefectSummaryResponse.model_validate(json.loads(job_path.read_text()))
+
+
+@router.get("/{dataset_id}/defect-slices/{axis}/{index}")
+async def get_defect_slice(
+    dataset_id: str,
+    axis: SliceAxis,
+    index: int,
+    opacity: float = Query(0.55, ge=0.0, le=1.0),
+) -> Response:
+    """Return a PNG original slice with persisted defect markers overlaid."""
+    dataset_dir = _get_existing_dataset_dir(dataset_id)
+    job = _load_latest_defect_record(dataset_dir)
+    if job["status"] != "complete":
+        raise HTTPException(status_code=409, detail=f"Defect detection is {job['status']}.")
+
+    volume = _load_cached_original_volume(str(get_settings().upload_storage_root), dataset_id)
+    max_index = _axis_size(volume, axis) - 1
+    if index < 0 or index > max_index:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Slice index {index} is out of range for axis {axis}; expected 0..{max_index}.",
+        )
+
+    result = _load_defect_result(dataset_dir)
+    base = _normalize_to_uint8(_extract_slice(volume, axis, index))
+    rgb = np.repeat(base[:, :, None], 3, axis=2)
+    slice_counts = _overlay_defects_on_slice(rgb, result.get("defects", []), axis, index, opacity)
+    png = _encode_rgb_png(rgb)
+    return Response(
+        content=png,
+        media_type="image/png",
+        headers={
+            "X-Slice-Axis": axis,
+            "X-Slice-Index": str(index),
+            "X-View": "defects",
+            "X-Defect-Slice-Counts": json.dumps(slice_counts, sort_keys=True),
+        },
+    )
+
+
 @router.post("/{dataset_id}/analysis-jobs", response_model=AnalysisJobResponse)
 async def start_analysis_job(
     dataset_id: str,
@@ -351,6 +506,9 @@ async def start_analysis_job(
         dataset_name=request.dataset_name,
         scale_unit=scale_unit,
     )
+    graph_path = _find_graph_json_path(dataset_dir)
+    if graph_path is not None:
+        job["artifacts"]["registered_graph"] = {"path": graph_path.name}
     _write_json(dataset_dir / "analysis_job.json", job)
 
     try:
@@ -408,9 +566,12 @@ async def get_latest_analysis_job(dataset_id: str) -> AnalysisJobResponse:
 async def list_dataset_artifacts(dataset_id: str) -> ArtifactManifestResponse:
     dataset_dir = _get_existing_dataset_dir(dataset_id)
     job = _load_latest_job_record(dataset_dir)
+    graph_path = _find_graph_json_path(dataset_dir)
     return ArtifactManifestResponse(
         dataset_id=dataset_id,
         project_id=job["project_id"],
+        graph_reference_available=graph_path is not None,
+        graph_reference_file_name=graph_path.name if graph_path else None,
         artifacts=job["artifacts"],
     )
 
@@ -582,6 +743,12 @@ async def probe_dataset_voxel(
         raise HTTPException(status_code=400, detail="Voxel coordinate is out of range.")
 
     intensity = float(volume[request.z, request.y, request.x])
+    defect_category = _defect_category_at_coordinate(
+        get_settings().upload_storage_root / dataset_id,
+        request.x,
+        request.y,
+        request.z,
+    )
 
     return VoxelProbeResponse(
         x=request.x,
@@ -589,6 +756,14 @@ async def probe_dataset_voxel(
         z=request.z,
         intensity=intensity,
         mask_value=1 if intensity > request.threshold else 0,
+        defect_category=defect_category,
+        defect_status=(
+            "flagged"
+            if defect_category
+            else "none"
+            if (get_settings().upload_storage_root / dataset_id / "defects.json").is_file()
+            else "not_run"
+        ),
     )
 
 
@@ -694,7 +869,7 @@ def _intake_graph(
 
     if suffix != ".json":
         return DatasetIntakeResponse(
-            valid=True,
+            valid=False,
             slot=slot,
             file_names=file_names,
             file_type=suffix.lstrip("."),
@@ -703,10 +878,9 @@ def _intake_graph(
             embedded_metadata=None,
             voxel_size_micron=None,
             warnings=[
-                "GraphML parsing is not implemented yet; file type was validated only.",
-                "Voxel size could not be read from graph metadata.",
+                "GraphML parsing is not implemented yet.",
             ],
-            errors=[],
+            errors=["Upload a registered graph JSON for reference-based detection."],
             demo_mode=True,
         )
 
@@ -1073,12 +1247,24 @@ def _persist_uploaded_dataset(uploaded_files: list[UploadedDatasetFile]) -> str:
     dataset_dir = get_settings().upload_storage_root / dataset_id
     dataset_dir.mkdir(parents=True, exist_ok=False)
 
-    # Minimal local persistence only. A durable datasets table/record should own
-    # this ID, metadata, asset paths, and lifecycle once planned dataset resources
-    # from API_CONTRACTS.md are implemented.
+    stored_files = []
     for uploaded_file in uploaded_files:
         output_path = dataset_dir / _safe_storage_file_name(uploaded_file.file_name)
         output_path.write_bytes(uploaded_file.contents)
+        stored_files.append(output_path.name)
+
+    _write_dataset_manifest(
+        dataset_dir,
+        {
+            "dataset_id": dataset_id,
+            "created_at": _utc_now(),
+            "updated_at": _utc_now(),
+            "assets": {"uploaded": stored_files},
+            "graph_reference_available": False,
+            "graph_reference_file_name": None,
+            "graph_reference_metadata": None,
+        },
+    )
 
     return dataset_id
 
@@ -1088,9 +1274,16 @@ def _persist_intake_assets(
     uploaded_files: list[UploadedDatasetFile],
     generated_files: list[UploadedDatasetFile],
     *,
+    response: DatasetIntakeResponse,
     existing_dataset_id: str | None,
 ) -> str:
-    if slot in {"npyVolume", "stlCad"} and existing_dataset_id:
+    if slot == "graphJson" and not existing_dataset_id:
+        raise HTTPException(
+            status_code=422,
+            detail="Graph JSON uploads must be associated with an existing CT dataset.",
+        )
+
+    if slot in {"npyVolume", "stlCad", "graphJson"} and existing_dataset_id:
         dataset_dir = get_settings().upload_storage_root / existing_dataset_id
         if not dataset_dir.is_dir():
             raise HTTPException(status_code=404, detail="Dataset not found.")
@@ -1104,9 +1297,26 @@ def _persist_intake_assets(
         output_path.write_bytes(upload.contents)
         if slot == "npyVolume":
             _load_cached_original_volume.cache_clear()
+        _record_intake_in_manifest(dataset_dir, slot, output_path.name, response)
         return existing_dataset_id
 
-    return _persist_uploaded_dataset(uploaded_files + generated_files)
+    dataset_id = _persist_uploaded_dataset(uploaded_files + generated_files)
+    dataset_dir = get_settings().upload_storage_root / dataset_id
+    for uploaded_file in uploaded_files:
+        _record_intake_in_manifest(
+            dataset_dir,
+            slot,
+            _safe_storage_file_name(uploaded_file.file_name),
+            response,
+        )
+    for generated_file in generated_files:
+        _record_intake_in_manifest(
+            dataset_dir,
+            "npyVolume",
+            _safe_storage_file_name(generated_file.file_name),
+            response,
+        )
+    return dataset_id
 
 
 def _get_existing_dataset_dir(dataset_id: str) -> Path:
@@ -1257,6 +1467,294 @@ def _run_skeletonization_agent(
     return summary
 
 
+def _base_defect_record(dataset_id: str, status: DefectJobStatus) -> dict[str, Any]:
+    now = _utc_now()
+    graph_path = _find_graph_json_path(get_settings().upload_storage_root / dataset_id)
+    return {
+        "dataset_id": dataset_id,
+        "status": status,
+        "total_flagged_elements": 0,
+        "total_flagged_voxels": 0,
+        "category_counts": {},
+        "reference_available": graph_path is not None,
+        "reference_message": (
+            f"Using registered graph reference {graph_path.name}."
+            if graph_path
+            else "Reference-based detection unavailable: no registered graph JSON was uploaded."
+        ),
+        "defect_artifact_path": None,
+        "summary_path": None,
+        "error": None,
+        "created_at": now,
+        "updated_at": now,
+    }
+
+
+def _not_run_defect_response(dataset_id: str, dataset_dir: Path) -> DefectSummaryResponse:
+    record = _base_defect_record(dataset_id, "not_run")
+    record["created_at"] = None
+    record["updated_at"] = None
+    record["reference_available"] = _find_graph_json_path(dataset_dir) is not None
+    if not record["reference_available"]:
+        record["reference_message"] = (
+            "Reference-based detection unavailable: no registered graph JSON was uploaded."
+        )
+    return DefectSummaryResponse.model_validate(record)
+
+
+def _run_defect_detection_agent(
+    dataset_dir: Path,
+    dataset_id: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    mask_path = dataset_dir / "segmentation.npy"
+    skeleton_path = dataset_dir / "skeleton.npy"
+    if not mask_path.is_file() or not skeleton_path.is_file():
+        raise ValueError("Segmentation and skeleton artifacts are required before defect detection.")
+
+    graph_path = _find_graph_json_path(dataset_dir)
+    if graph_path is None:
+        raise ValueError(_missing_graph_reference_message(dataset_dir))
+
+    graph = load_design_graph(graph_path)
+    mask = np.load(mask_path, allow_pickle=False)
+    skeleton = np.load(skeleton_path, allow_pickle=False)
+    distance_map = ndimage.distance_transform_edt(mask > 0)
+    nodes = [
+        {"id": int(node["id"]), "position": [float(v) for v in node["position"]]}
+        for node in graph["junctions"]
+    ]
+    struts = [
+        {
+            **strut,
+            "id": int(strut["id"]),
+            "node_a": int(strut["junction0"]),
+            "node_b": int(strut["junction1"]),
+        }
+        for strut in graph["struts"]
+    ]
+    result = classify_defects(
+        mask,
+        skeleton,
+        distance_map,
+        nodes,
+        struts,
+        1.0,
+        config=DefectConfig(nominal_thickness_um=None),
+    )
+    supported = set(DEFECT_CATEGORY_COLORS)
+    result["defects"] = [
+        defect for defect in result["defects"] if defect.get("type") in supported
+    ]
+    summary = _summarize_defects(dataset_id, result, graph_path)
+    result["summary"] = {**result.get("summary", {}), "ui_summary": summary}
+    return result, summary
+
+
+def _summarize_defects(
+    dataset_id: str,
+    result: dict[str, Any],
+    graph_path: Path,
+) -> dict[str, Any]:
+    counts: dict[str, int] = {}
+    for defect in result.get("defects", []):
+        category = str(defect.get("type"))
+        counts[category] = counts.get(category, 0) + 1
+    total = sum(counts.values())
+    return {
+        "dataset_id": dataset_id,
+        "status": "complete",
+        "total_flagged_elements": total,
+        "total_flagged_voxels": total,
+        "category_counts": counts,
+        "reference_available": True,
+        "reference_message": f"Using registered graph reference {graph_path.name}.",
+        "defect_artifact_path": "defects.json",
+        "summary_path": "defect_summary.json",
+        "error": None,
+        "created_at": _utc_now(),
+        "updated_at": _utc_now(),
+    }
+
+
+def _find_graph_json_path(dataset_dir: Path) -> Path | None:
+    manifest = _load_dataset_manifest(dataset_dir)
+    graph_file_name = manifest.get("graph_reference_file_name")
+    if isinstance(graph_file_name, str) and graph_file_name:
+        graph_path = dataset_dir / graph_file_name
+        if graph_path.is_file() and graph_path.parent == dataset_dir:
+            return graph_path
+
+    candidates = [
+        path
+        for path in sorted(dataset_dir.glob("*.json"), key=lambda item: _natural_sort_key(item.name))
+        if path.name not in {
+            "analysis_job.json",
+            "dataset_manifest.json",
+            "defect_job.json",
+            "defect_summary.json",
+            "project.json",
+            "segmentation_summary.json",
+            "skeleton_summary.json",
+            "defects.json",
+        }
+    ]
+    return candidates[0] if candidates else None
+
+
+def _load_dataset_manifest(dataset_dir: Path) -> dict[str, Any]:
+    manifest_path = dataset_dir / "dataset_manifest.json"
+    if not manifest_path.is_file():
+        return {
+            "dataset_id": dataset_dir.name,
+            "assets": {},
+            "graph_reference_available": False,
+            "graph_reference_file_name": None,
+            "graph_reference_metadata": None,
+        }
+    try:
+        data = json.loads(manifest_path.read_text())
+    except json.JSONDecodeError:
+        return {
+            "dataset_id": dataset_dir.name,
+            "assets": {},
+            "graph_reference_available": False,
+            "graph_reference_file_name": None,
+            "graph_reference_metadata": None,
+        }
+    return data if isinstance(data, dict) else {}
+
+
+def _write_dataset_manifest(dataset_dir: Path, manifest: dict[str, Any]) -> None:
+    manifest["updated_at"] = _utc_now()
+    _write_json(dataset_dir / "dataset_manifest.json", manifest)
+
+
+def _record_intake_in_manifest(
+    dataset_dir: Path,
+    slot: DatasetSlot,
+    file_name: str,
+    response: DatasetIntakeResponse,
+) -> None:
+    manifest = _load_dataset_manifest(dataset_dir)
+    manifest.setdefault("dataset_id", dataset_dir.name)
+    manifest.setdefault("created_at", _utc_now())
+    assets = manifest.setdefault("assets", {})
+    slot_assets = assets.setdefault(slot, [])
+    if file_name not in slot_assets:
+        slot_assets.append(file_name)
+
+    if slot == "graphJson":
+        manifest["graph_reference_available"] = True
+        manifest["graph_reference_file_name"] = file_name
+        manifest["graph_reference_metadata"] = response.embedded_metadata
+
+    _write_dataset_manifest(dataset_dir, manifest)
+
+
+def _missing_graph_reference_message(dataset_dir: Path) -> str:
+    job_path = dataset_dir / "analysis_job.json"
+    if job_path.is_file():
+        try:
+            artifact = json.loads(job_path.read_text()).get("artifacts", {}).get(
+                "registered_graph"
+            )
+        except json.JSONDecodeError:
+            artifact = None
+        if isinstance(artifact, dict) and artifact.get("path"):
+            return (
+                "Reference-based detection unavailable: registered graph artifact "
+                f"{artifact['path']} is recorded for this dataset but the file is missing."
+            )
+    return "Reference-based detection unavailable: no registered graph JSON was uploaded."
+
+
+def _load_latest_defect_record(dataset_dir: Path) -> dict[str, Any]:
+    job_path = dataset_dir / "defect_job.json"
+    if not job_path.is_file():
+        raise HTTPException(status_code=409, detail="Defect detection has not been run.")
+    return json.loads(job_path.read_text())
+
+
+def _load_defect_result(dataset_dir: Path) -> dict[str, Any]:
+    path = dataset_dir / "defects.json"
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Defect artifact not found.")
+    return json.loads(path.read_text())
+
+
+def _defect_category_at_coordinate(
+    dataset_dir: Path,
+    x: int,
+    y: int,
+    z: int,
+) -> str | None:
+    if not (dataset_dir / "defects.json").is_file():
+        return None
+    result = _load_defect_result(dataset_dir)
+    point = np.asarray([x, y, z], dtype=float)
+    for defect in result.get("defects", []):
+        category = defect.get("type")
+        location = np.asarray(defect.get("location_voxel", []), dtype=float)
+        if category in DEFECT_CATEGORY_COLORS and location.shape == (3,):
+            if float(np.linalg.norm(location - point)) <= 2.5:
+                return str(category)
+    return None
+
+
+def _overlay_defects_on_slice(
+    rgb: np.ndarray,
+    defects: list[dict[str, Any]],
+    axis: SliceAxis,
+    index: int,
+    opacity: float,
+) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for defect in defects:
+        category = str(defect.get("type"))
+        color = DEFECT_CATEGORY_COLORS.get(category)
+        location = np.asarray(defect.get("location_voxel", []), dtype=float)
+        if color is None or location.shape != (3,):
+            continue
+        plane_value = {"x": location[0], "y": location[1], "z": location[2]}[axis]
+        if abs(float(plane_value) - index) > 2.5:
+            continue
+        row, col = _project_xyz_to_slice_pixel(location, axis)
+        _draw_disc(rgb, row, col, color, opacity)
+        counts[category] = counts.get(category, 0) + 1
+    return counts
+
+
+def _project_xyz_to_slice_pixel(point_xyz: np.ndarray, axis: SliceAxis) -> tuple[int, int]:
+    x, y, z = [int(round(float(value))) for value in point_xyz]
+    if axis == "x":
+        return z, y
+    if axis == "y":
+        return z, x
+    return y, x
+
+
+def _draw_disc(
+    rgb: np.ndarray,
+    row: int,
+    col: int,
+    color: tuple[int, int, int],
+    opacity: float,
+    radius: int = 4,
+) -> None:
+    height, width = rgb.shape[:2]
+    r0, r1 = max(0, row - radius), min(height, row + radius + 1)
+    c0, c1 = max(0, col - radius), min(width, col + radius + 1)
+    if r0 >= r1 or c0 >= c1:
+        return
+    yy, xx = np.ogrid[r0:r1, c0:c1]
+    mask = (yy - row) ** 2 + (xx - col) ** 2 <= radius**2
+    patch = rgb[r0:r1, c0:c1]
+    patch[mask] = (
+        (1.0 - opacity) * patch[mask].astype(float)
+        + opacity * np.asarray(color, dtype=float)
+    ).astype(np.uint8)
+
+
 def _count_skeleton_nodes(skeleton: np.ndarray) -> tuple[int, int]:
     padded = np.pad(skeleton.astype(np.uint8, copy=False), 1)
     coordinates = np.argwhere(skeleton)
@@ -1294,7 +1792,7 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
 
 
 def _utc_now() -> str:
-    return datetime.now(UTC).isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _load_latest_job_record(dataset_dir: Path) -> dict[str, Any]:
@@ -1506,6 +2004,30 @@ def _encode_grayscale_png(image: np.ndarray) -> bytes:
     return (
         b"\x89PNG\r\n\x1a\n"
         + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 0, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(raw_rows))
+        + chunk(b"IEND", b"")
+    )
+
+
+def _encode_rgb_png(image: np.ndarray) -> bytes:
+    if image.ndim != 3 or image.shape[2] != 3:
+        raise ValueError("PNG encoding expects a 2D RGB image.")
+
+    image_uint8 = np.asarray(image, dtype=np.uint8)
+    height, width = image_uint8.shape[:2]
+    raw_rows = b"".join(b"\x00" + image_uint8[row].tobytes() for row in range(height))
+
+    def chunk(chunk_type: bytes, data: bytes) -> bytes:
+        return (
+            struct.pack(">I", len(data))
+            + chunk_type
+            + data
+            + struct.pack(">I", zlib.crc32(chunk_type + data) & 0xFFFFFFFF)
+        )
+
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
         + chunk(b"IDAT", zlib.compress(raw_rows))
         + chunk(b"IEND", b"")
     )
