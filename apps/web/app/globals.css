@@ -803,6 +803,32 @@ input[type="file"] {
   width: min(100% - 3rem, 1480px);
 }
 
+.measurement-content {
+  width: min(1100px, calc(100% - 4rem));
+}
+
+.measurement-context {
+  margin-top: 2rem;
+}
+
+.measurement-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.85rem;
+  margin-top: 0.85rem;
+}
+
+.measurement-card p {
+  color: var(--muted);
+  font-size: 0.94rem;
+  font-weight: 550;
+  line-height: 1.55;
+}
+
+.measurement-notice {
+  margin-top: 0.85rem;
+}
+
 .structure-context {
   margin-top: 2rem;
 }
@@ -1533,7 +1559,8 @@ input[type="file"] {
   .lookup-grid,
   .segmentation-grid,
   .metric-grid,
-  .slice-toolbar {
+  .slice-toolbar,
+  .measurement-grid {
     grid-template-columns: 1fr;
   }
 

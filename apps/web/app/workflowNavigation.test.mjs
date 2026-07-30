@@ -32,7 +32,7 @@ test("default workflow route sends root traffic to project dataset", async () =>
   assert.match(pageSource, /redirect\(defaultWorkflowRoute\)/);
 });
 
-test("workflow navigation exposes three clickable routes", async () => {
+test("workflow navigation exposes four clickable routes", async () => {
   const { workflowNavItems } = await importModule(
     "./workflowNavigation.ts",
     "workflowNavigation-items",
@@ -44,6 +44,7 @@ test("workflow navigation exposes three clickable routes", async () => {
       ["Project / Dataset", "/project-dataset"],
       ["CT Preparation", "/segmentation"],
       ["3D Structure Analysis", "/structure-analysis"],
+      ["Measurements", "/measurements"],
     ],
   );
   assert.equal(
@@ -64,6 +65,7 @@ test("workflow navigation highlights the current page", async () => {
     getActiveWorkflowItem("/structure-analysis").label,
     "3D Structure Analysis",
   );
+  assert.equal(getActiveWorkflowItem("/measurements").label, "Measurements");
 });
 
 test("workflow hrefs preserve current dataset and threshold query context", async () => {

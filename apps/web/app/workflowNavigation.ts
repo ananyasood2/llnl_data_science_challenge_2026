@@ -3,7 +3,8 @@ export const defaultWorkflowRoute = "/project-dataset";
 export type WorkflowRoute =
   | "/project-dataset"
   | "/segmentation"
-  | "/structure-analysis";
+  | "/structure-analysis"
+  | "/measurements";
 
 export type WorkflowNavItem = {
   label: string;
@@ -41,6 +42,15 @@ export const workflowNavItems: WorkflowNavItem[] = [
     status: "Dash viewer",
     copy:
       "Validate the prepared CT segmentation using the existing 3D Dash dashboard.",
+  },
+  {
+    label: "Measurements",
+    route: "/measurements",
+    kicker: "Step 4",
+    title: "Measurements",
+    status: "Measurement scaffold",
+    copy:
+      "Review quantitative thickness and relative-density evidence for the active lattice dataset.",
   },
 ];
 
