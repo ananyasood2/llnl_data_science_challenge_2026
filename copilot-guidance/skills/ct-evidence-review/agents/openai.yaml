@@ -1,0 +1,3 @@
+interface:
+  display_name: "CT Evidence Review"
+  short_description: "Review raw CT evidence for a selected element"

@@ -237,6 +237,45 @@ h2 {
   align-items: flex-start;
 }
 
+.element-review-panel {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.7fr) minmax(260px, 1.3fr);
+  gap: 12px 20px;
+  align-items: start;
+  padding: 16px;
+  border-top: 1px solid var(--line);
+  background: #0a1821;
+}
+
+.element-review-panel h3 {
+  margin: 5px 0 7px;
+  color: #eef8fb;
+  font-size: 17px;
+}
+
+.element-review-copy {
+  margin: 0;
+  color: #91a8b3;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.element-review-answer {
+  grid-column: 2;
+  min-height: 58px;
+  padding: 11px 13px;
+  color: #dcecf2;
+  background: #071018;
+  border: 1px solid #1a3442;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.element-review-answer p {
+  margin: 0 0 8px;
+}
+
 .review-status {
   padding: 3px 7px;
   border: 1px solid currentcolor;
@@ -563,6 +602,70 @@ h2 {
   color: #ff8ca0;
 }
 
+.copilot-panel {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.72fr) minmax(260px, 1.28fr);
+  gap: 14px 20px;
+  align-items: start;
+  resize: vertical;
+  overflow: auto;
+}
+
+.copilot-heading {
+  grid-row: span 3;
+}
+
+.copilot-heading h2 {
+  margin: 5px 0 8px;
+}
+
+.copilot-copy,
+.copilot-context-status,
+.copilot-status,
+.copilot-citations {
+  color: #91a8b3;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.copilot-question {
+  width: 100%;
+  min-height: 76px;
+  resize: vertical;
+  padding: 10px 12px;
+  color: #edf8fc;
+  background: #071018;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font: inherit;
+}
+
+.copilot-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.copilot-answer {
+  grid-column: 2;
+  min-height: 72px;
+  padding: 12px 14px;
+  color: #dcecf2;
+  background: #08151d;
+  border: 1px solid #1a3442;
+  border-radius: 8px;
+}
+
+.copilot-answer p {
+  margin: 0 0 10px;
+  line-height: 1.55;
+}
+
+.copilot-run {
+  color: #55d6be;
+  font-variant-numeric: tabular-nums;
+}
+
 @media (max-width: 940px) {
   .model-header {
     align-items: start;
@@ -584,6 +687,24 @@ h2 {
 
   .verification-heading {
     flex-basis: auto;
+  }
+
+  .copilot-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .copilot-heading,
+  .copilot-answer {
+    grid-column: auto;
+    grid-row: auto;
+  }
+
+  .element-review-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .element-review-answer {
+    grid-column: auto;
   }
 
   .lookup-controls {

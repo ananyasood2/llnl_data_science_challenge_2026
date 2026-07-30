@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     demo_mode: bool = True
     log_level: str = "INFO"
     upload_storage_root: Path = Path(gettempdir()) / "lattice-ct-inspection" / "uploads"
+    copilot_artifact_root: Path = Path(gettempdir()) / "lattice-ct-inspection" / "copilot-artifacts"
+    openai_api_key: str | None = None
+    copilot_model: str = "gpt-5.6-terra"
+    copilot_reasoning_effort: str = "medium"
 
     model_config = SettingsConfigDict(
         env_file=".env",

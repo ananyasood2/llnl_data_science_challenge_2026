@@ -98,6 +98,41 @@ npm run dev:api
 The API health endpoint is `http://localhost:8000/health`; local OpenAPI docs
 are at `http://localhost:8000/docs`.
 
+### Interactive viewport copilot
+
+Start the API and the registered structure viewer in separate terminals, then
+open the Dash viewer directly or through the Next.js structure-analysis page:
+
+```bash
+conda activate dssi_env
+npm run dev:api
+
+# In a second terminal
+conda activate dssi_env
+npm run dev:structure
+```
+
+The viewer now includes a **Viewport Co-Pilot** panel. It captures the active
+dataset, XYZ display bounds, status/element filters, threshold, camera, and
+selected element. Ask “Analyze connectivity in the region I’m looking at” to
+run deterministic registered-graph and CT-component analysis. Results are
+explicitly scoped to the displayed bounds and filters; raw CT volumes remain
+server-side.
+
+The copilot works without an LLM key using deterministic narration. To enable
+server-side OpenAI Responses narration, set `OPENAI_API_KEY` in
+`services/analysis-api/.env`; the key is never sent to Dash or Next.js. Run the
+safe MCP server with:
+
+```bash
+cd services/analysis-api
+python -m app.copilot.mcp_server
+```
+
+This new MCP server accepts viewport context IDs and registered element IDs,
+not arbitrary filesystem paths. Copilot reports and traces are written to the
+configured temporary copilot artifact directory, never to source CT data.
+
 ### Phase 1 checks
 
 ```bash

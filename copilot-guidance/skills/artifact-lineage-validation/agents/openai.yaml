@@ -1,0 +1,3 @@
+interface:
+  display_name: "Artifact Lineage Validation"
+  short_description: "Validate copilot scientific provenance"

@@ -697,6 +697,16 @@ input[type="file"] {
   background: #ffffff;
 }
 
+.viewer-viewport-context {
+  margin: 0;
+  padding: 0.65rem 0.85rem;
+  color: var(--muted-foreground, #5f6f78);
+  font-size: 0.8rem;
+  border: 1px solid var(--border, #d7dde0);
+  border-top: 0;
+  border-radius: 0 0 0.5rem 0.5rem;
+}
+
 .viewer-status {
   position: absolute;
   top: 1rem;

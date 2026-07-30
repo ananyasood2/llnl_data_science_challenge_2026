@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 type StructureViewerFrameProps = {
   viewerUrl: string;
@@ -8,6 +8,8 @@ type StructureViewerFrameProps = {
 
 export function StructureViewerFrame({ viewerUrl }: StructureViewerFrameProps) {
   const [state, setState] = useState<"loading" | "ready" | "unavailable">("loading");
+  const [viewportLabel, setViewportLabel] = useState<string | null>(null);
+  const frameRef = useRef<HTMLIFrameElement>(null);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -15,6 +17,30 @@ export function StructureViewerFrame({ viewerUrl }: StructureViewerFrameProps) {
     }, 6500);
 
     return () => window.clearTimeout(timeout);
+  }, [viewerUrl]);
+
+  useEffect(() => {
+    const viewerOrigin = new URL(viewerUrl, window.location.href).origin;
+    const onMessage = (event: MessageEvent) => {
+      if (
+        event.origin !== viewerOrigin ||
+        event.source !== frameRef.current?.contentWindow ||
+        !event.data ||
+        event.data.type !== "lattice.viewport.v1"
+      ) {
+        return;
+      }
+      const context = event.data.context;
+      if (!context || context.version !== "1") {
+        return;
+      }
+      setViewportLabel(
+        `${context.dataset_id} · revision ${context.viewer_revision} · ` +
+          `bounds ${context.region?.min_xyz?.join(", ")} → ${context.region?.max_xyz?.join(", ")}`,
+      );
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
   }, [viewerUrl]);
 
   return (
@@ -31,11 +57,17 @@ export function StructureViewerFrame({ viewerUrl }: StructureViewerFrameProps) {
         </div>
       ) : null}
       <iframe
+        ref={frameRef}
         title="3D structure validation dashboard"
         src={viewerUrl}
         className="structure-iframe"
         onLoad={() => setState("ready")}
       />
+      {viewportLabel ? (
+        <p className="viewer-viewport-context" role="status">
+          Copilot viewport: {viewportLabel}
+        </p>
+      ) : null}
     </section>
   );
 }

@@ -1,0 +1,3 @@
+interface:
+  display_name: "Viewport Connectivity"
+  short_description: "Analyze connectivity in the active lattice viewport"

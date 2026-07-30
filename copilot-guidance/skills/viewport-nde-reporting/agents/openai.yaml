@@ -1,0 +1,3 @@
+interface:
+  display_name: "Viewport NDE Report"
+  short_description: "Create reproducible viewport-scoped reports"

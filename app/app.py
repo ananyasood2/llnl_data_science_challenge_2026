@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import json
 import math
+import os
 import sys
+import urllib.request
+import uuid
 from collections import OrderedDict
+from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 from threading import RLock
@@ -1218,6 +1223,116 @@ def _evidence_details(
     return details
 
 
+def _copilot_api_url() -> str:
+    """Return the local FastAPI copilot endpoint without exposing a model key."""
+    return os.environ.get("LATTICE_COPILOT_API_URL", "http://127.0.0.1:8000").rstrip("/")
+
+
+def _copilot_parent_origins() -> list[str]:
+    configured = os.environ.get(
+        "LATTICE_COPILOT_PARENT_ORIGINS",
+        "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001",
+    )
+    return [origin.strip() for origin in configured.split(",") if origin.strip()]
+
+
+def _camera_from_relayout(relayout_data: dict[str, Any] | None) -> dict[str, Any]:
+    camera = (relayout_data or {}).get("scene.camera", {})
+    if not isinstance(camera, dict):
+        camera = {}
+
+    def vector(key: str, fallback: dict[str, float]) -> dict[str, float]:
+        source = camera.get(key, {})
+        if not isinstance(source, dict):
+            source = {}
+        return {
+            axis: float(source.get(axis, fallback[axis]))
+            for axis in ("x", "y", "z")
+        }
+
+    return {
+        "eye": vector("eye", {"x": 1.45, "y": 1.45, "z": 1.1}),
+        "center": vector("center", {"x": 0.0, "y": 0.0, "z": 0.0}),
+        "up": vector("up", {"x": 0.0, "y": 0.0, "z": 1.0}),
+        "projection": "perspective",
+    }
+
+
+def _post_json(url: str, payload: dict[str, Any]) -> dict[str, Any]:
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=45) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def _copilot_context_payload(
+    dataset_key: str,
+    config: dict[str, Any],
+    statuses: list[str] | None,
+    elements: list[str] | None,
+    selected_reference: dict[str, Any] | None,
+    threshold_value: float | None,
+    x_axis_max: float | None,
+    y_axis_max: float | None,
+    z_axis_max: float | None,
+    relayout_data: dict[str, Any] | None,
+    viewer_revision: int,
+) -> dict[str, Any]:
+    threshold = None if threshold_value is None else float(threshold_value)
+    analysis = _analysis(dataset_key, float(config["voxel_size_mm"]), threshold)
+    shape_zyx = analysis["meta"]["volume_shape"]
+    max_xyz = [
+        float(x_axis_max) if x_axis_max is not None else float(shape_zyx[2] - 1),
+        float(y_axis_max) if y_axis_max is not None else float(shape_zyx[1] - 1),
+        float(z_axis_max) if z_axis_max is not None else float(shape_zyx[0] - 1),
+    ]
+    active_threshold = float(analysis["meta"]["threshold"])
+    return {
+        "version": "1",
+        "captured_at": datetime.now(timezone.utc).isoformat(),
+        "dataset_id": dataset_key,
+        "threshold": {
+            "value": active_threshold,
+            "unit": "normalized_intensity",
+            "source": "automatic" if threshold_value is None else "manual",
+        },
+        "coordinate_space": "registered_voxel_xyz",
+        "region": {"min_xyz": [0.0, 0.0, 0.0], "max_xyz": max_xyz},
+        "camera": _camera_from_relayout(relayout_data),
+        "visible_statuses": statuses or [],
+        "visible_element_types": [
+            "strut" if item == "struts" else "node"
+            for item in (elements or [])
+            if item in {"struts", "nodes"}
+        ],
+        "selected_element": selected_reference,
+        "viewer_revision": viewer_revision,
+    }
+
+
+def _read_copilot_sse(conversation_id: str, payload: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    request = urllib.request.Request(
+        f"{_copilot_api_url()}/v1/copilot/conversations/{conversation_id}/messages",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json", "Accept": "text/event-stream"},
+        method="POST",
+    )
+    events: list[tuple[str, dict[str, Any]]] = []
+    event_name = "message"
+    with urllib.request.urlopen(request, timeout=120) as response:
+        for raw_line in response:
+            line = raw_line.decode("utf-8").strip()
+            if line.startswith("event: "):
+                event_name = line[7:]
+            elif line.startswith("data: "):
+                events.append((event_name, json.loads(line[6:])))
+    return events
+
+
 def _selection_highlight(
     selected: tuple[str, dict[str, Any]] | None,
     axis_order: str,
@@ -1263,6 +1378,7 @@ def _inspection_figure(
     selected: tuple[str, dict[str, Any]] | None,
     axis_order: str = "XYZ",
     axis_maxima: dict[str, float | None] | None = None,
+    highlight_strut_ids: list[int] | None = None,
 ) -> go.Figure:
     allowed = set(statuses or [])
     element_types = set(elements or [])
@@ -1352,6 +1468,35 @@ def _inspection_figure(
             highlight = _selection_highlight(selected, normalized_axis_order)
             if highlight is not None:
                 figure.add_trace(highlight)
+
+    highlighted = set(highlight_strut_ids or [])
+    if highlighted and "struts" in element_types:
+        highlighted_records = [
+            record
+            for record in bounded_struts
+            if int(record["id"]) in highlighted
+        ]
+        if highlighted_records:
+            x_values: list[float | None] = []
+            y_values: list[float | None] = []
+            z_values: list[float | None] = []
+            for record in highlighted_records:
+                points = _reorder_xyz(record["polyline"], normalized_axis_order)
+                x_values.extend([float(value) for value in points[:, 0]] + [None])
+                y_values.extend([float(value) for value in points[:, 1]] + [None])
+                z_values.extend([float(value) for value in points[:, 2]] + [None])
+            figure.add_trace(
+                go.Scatter3d(
+                    x=x_values,
+                    y=y_values,
+                    z=z_values,
+                    mode="lines",
+                    line={"color": "#55d6be", "width": 12},
+                    name="Copilot selection",
+                    hoverinfo="skip",
+                    showlegend=False,
+                )
+            )
 
     figure.update_layout(
         height=760,
@@ -1582,6 +1727,11 @@ def create_app(default_dataset: str = "missing_struts") -> Dash:
     app.layout = html.Main(
         [
             dcc.Store(id="selected-element"),
+            dcc.Store(id="viewport-context"),
+            dcc.Store(id="viewport-bridge"),
+            dcc.Store(id="copilot-context-id"),
+            dcc.Store(id="copilot-highlight-ids", data=[]),
+            dcc.Store(id="copilot-parent-origins", data=_copilot_parent_origins()),
             html.Header(
                 [
                     html.Div(
@@ -1789,6 +1939,37 @@ def create_app(default_dataset: str = "missing_struts") -> Dash:
                 [
                     html.Div(
                         [
+                            html.Div("VIEWPORT CO-PILOT", className="eyebrow"),
+                            html.H2("Ask about the region on screen"),
+                            html.P(
+                                "The copilot receives the active dataset, display bounds, filters, threshold, camera, and selected element. Scientific answers are generated from deterministic analysis tools.",
+                                className="copilot-copy",
+                            ),
+                        ],
+                        className="copilot-heading",
+                    ),
+                    html.Div(id="copilot-context-status", className="copilot-context-status", children="Capturing viewer context…"),
+                    dcc.Textarea(
+                        id="copilot-question",
+                        value="Analyze connectivity in the region I’m looking at.",
+                        className="copilot-question",
+                        placeholder="Ask about connectivity, defects, CT evidence, or the selected element.",
+                    ),
+                    html.Div(
+                        [
+                            html.Button("Analyze viewport", id="copilot-submit", type="button", className="inspect-button"),
+                            html.Span(id="copilot-status", className="copilot-status"),
+                        ],
+                        className="copilot-actions",
+                    ),
+                    html.Div(id="copilot-answer", className="copilot-answer"),
+                ],
+                className="model-panel copilot-panel",
+            ),
+            html.Section(
+                [
+                    html.Div(
+                        [
                             html.Div(
                                 [
                                     html.Div(
@@ -1913,6 +2094,34 @@ def create_app(default_dataset: str = "missing_struts") -> Dash:
                         id="evidence-details",
                         className="selection-details evidence-details",
                     ),
+                    html.Div(
+                        [
+                            html.Div(
+                                [
+                                    html.Div("SELECTED-ELEMENT REVIEW", className="eyebrow"),
+                                    html.H3("Explain this candidate"),
+                                    html.P(
+                                        "Uses the selected registered element, its detector rule inputs, expected-geometry comparison when applicable, and the CT evidence already shown above.",
+                                        className="element-review-copy",
+                                    ),
+                                ]
+                            ),
+                            html.Div(
+                                [
+                                    html.Button(
+                                        "Review selected element",
+                                        id="review-selected-element",
+                                        type="button",
+                                        className="inspect-button",
+                                    ),
+                                    html.Span(id="element-review-status", className="copilot-status"),
+                                ],
+                                className="copilot-actions",
+                            ),
+                            html.Div(id="element-review-answer", className="element-review-answer"),
+                        ],
+                        className="element-review-panel",
+                    ),
                 ],
                 className="model-panel verification-panel",
             ),
@@ -1993,6 +2202,7 @@ def create_app(default_dataset: str = "missing_struts") -> Dash:
         Input("x-axis-max", "value"),
         Input("y-axis-max", "value"),
         Input("z-axis-max", "value"),
+        Input("copilot-highlight-ids", "data"),
     )
     def update_model(
         statuses: list[str],
@@ -2003,6 +2213,7 @@ def create_app(default_dataset: str = "missing_struts") -> Dash:
         x_axis_max: float | None,
         y_axis_max: float | None,
         z_axis_max: float | None,
+        copilot_highlight_ids: list[int] | None,
     ) -> tuple[Any, ...]:
         try:
             threshold = (
@@ -2036,6 +2247,7 @@ def create_app(default_dataset: str = "missing_struts") -> Dash:
                     selected,
                     "XYZ",
                     axis_maxima,
+                    copilot_highlight_ids or [],
                 ),
                 _visible_summary(
                     analysis,
@@ -2090,6 +2302,203 @@ def create_app(default_dataset: str = "missing_struts") -> Dash:
     )
     def restore_automatic_threshold(_clicks: int | None) -> None:
         return None
+
+    @app.callback(
+        Output("viewport-context", "data"),
+        Input("status-filters", "value"),
+        Input("element-filters", "value"),
+        Input("selected-element", "data"),
+        Input("threshold-control", "value"),
+        Input("x-axis-max", "value"),
+        Input("y-axis-max", "value"),
+        Input("z-axis-max", "value"),
+        Input("viewer", "relayoutData"),
+    )
+    def capture_viewport_context(
+        statuses: list[str] | None,
+        elements: list[str] | None,
+        selected_reference: dict[str, Any] | None,
+        threshold_value: float | None,
+        x_axis_max: float | None,
+        y_axis_max: float | None,
+        z_axis_max: float | None,
+        relayout_data: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        revision = int((relayout_data or {}).get("_copilot_revision", 0)) + 1
+        return _copilot_context_payload(
+            default_dataset,
+            config,
+            statuses,
+            elements,
+            selected_reference,
+            threshold_value,
+            x_axis_max,
+            y_axis_max,
+            z_axis_max,
+            relayout_data,
+            revision,
+        )
+
+    @app.callback(
+        Output("copilot-context-id", "data"),
+        Output("copilot-context-status", "children"),
+        Input("viewport-context", "data"),
+    )
+    def sync_copilot_context(viewport_context: dict[str, Any] | None) -> tuple[str | None, Any]:
+        if not viewport_context:
+            return None, "Waiting for viewer context…"
+        try:
+            response = _post_json(
+                f"{_copilot_api_url()}/v1/copilot/viewport-contexts",
+                viewport_context,
+            )
+            return (
+                response["context_id"],
+                html.Span(
+                    f"Ready · context {response['fingerprint'][:10]} · "
+                    f"dataset {response['dataset_id']}",
+                ),
+            )
+        except Exception as exc:
+            return None, html.Span(
+                [
+                    "Copilot API unavailable. Start ",
+                    html.Code("npm run dev:api"),
+                    f" then retry. ({exc})",
+                ],
+                className="error-message",
+            )
+
+    app.clientside_callback(
+        """
+        function(context, origins) {
+            if (!context) { return window.dash_clientside.no_update; }
+            if (window.parent && window.parent !== window) {
+                (origins || []).forEach(function(origin) {
+                    window.parent.postMessage({type: "lattice.viewport.v1", context: context}, origin);
+                });
+            }
+            return {fingerprint: context.dataset_id + ":" + context.viewer_revision};
+        }
+        """,
+        Output("viewport-bridge", "data"),
+        Input("viewport-context", "data"),
+        State("copilot-parent-origins", "data"),
+    )
+
+    @app.callback(
+        Output("copilot-answer", "children"),
+        Output("copilot-status", "children"),
+        Output("copilot-highlight-ids", "data"),
+        Input("copilot-submit", "n_clicks"),
+        State("copilot-question", "value"),
+        State("copilot-context-id", "data"),
+        prevent_initial_call=True,
+    )
+    def ask_copilot(
+        _clicks: int | None,
+        question: str | None,
+        context_id: str | None,
+    ) -> tuple[Any, Any, list[int]]:
+        if not question or not question.strip():
+            return html.Span("Enter a question for the copilot.", className="error-message"), "", []
+        if not context_id:
+            return (
+                html.Span("Capture a valid viewport context first.", className="error-message"),
+                "",
+                [],
+            )
+        try:
+            events = _read_copilot_sse(str(uuid.uuid4()), {"message": question.strip(), "context_id": context_id})
+        except Exception as exc:
+            return html.Span(f"Copilot request failed: {exc}", className="error-message"), "", []
+        answer: dict[str, Any] | None = None
+        error: dict[str, Any] | None = None
+        highlight_ids: list[int] = []
+        citations: list[str] = []
+        for event_name, payload in events:
+            if event_name == "answer":
+                answer = payload
+                citations = list(payload.get("citations", []))
+            elif event_name == "viewer_action" and payload.get("type") == "highlight_elements":
+                highlight_ids = [int(value) for value in payload.get("ids", [])]
+            elif event_name == "error":
+                error = payload
+        if error:
+            return html.Span(error.get("detail", "Copilot analysis failed."), className="error-message"), "", []
+        if answer is None:
+            return html.Span("Copilot did not return an answer.", className="error-message"), "", []
+        return (
+            html.Div(
+                [
+                    html.P(answer["text"]),
+                    html.Div(
+                        [
+                            html.Span(f"Run {answer['run_id']}", className="copilot-run"),
+                            html.Span(" · "),
+                            html.Span("Tools: " + ", ".join(citations)),
+                        ],
+                        className="copilot-citations",
+                    ),
+                ]
+            ),
+            "Analysis complete" + (f" · highlighting {len(highlight_ids)} strut(s)" if highlight_ids else ""),
+            highlight_ids,
+        )
+
+    @app.callback(
+        Output("element-review-answer", "children"),
+        Output("element-review-status", "children"),
+        Input("review-selected-element", "n_clicks"),
+        State("selected-element", "data"),
+        State("copilot-context-id", "data"),
+        prevent_initial_call=True,
+    )
+    def review_selected_element(
+        _clicks: int | None,
+        selected_reference: dict[str, Any] | None,
+        context_id: str | None,
+    ) -> tuple[Any, Any]:
+        if not selected_reference:
+            return (
+                html.Span("Click a registered strut or node first.", className="error-message"),
+                "No selected element",
+            )
+        if not context_id:
+            return (
+                html.Span("Capturing the selected-element context. Try again in a moment.", className="error-message"),
+                "Context not ready",
+            )
+        try:
+            events = _read_copilot_sse(
+                str(uuid.uuid4()),
+                {
+                    "message": "Perform a full selected-element evidence review.",
+                    "context_id": context_id,
+                },
+            )
+        except Exception as exc:
+            return html.Span(f"Selected-element review failed: {exc}", className="error-message"), "Review unavailable"
+        answer: dict[str, Any] | None = None
+        error: dict[str, Any] | None = None
+        for event_name, payload in events:
+            if event_name == "answer":
+                answer = payload
+            elif event_name == "error":
+                error = payload
+        if error:
+            return html.Span(error.get("detail", "Review failed."), className="error-message"), "Review failed"
+        if answer is None:
+            return html.Span("The review returned no explanation.", className="error-message"), "Review unavailable"
+        return (
+            html.Div(
+                [
+                    html.P(answer["text"]),
+                    html.Span(f"Evidence-backed run {answer['run_id']}", className="copilot-run"),
+                ]
+            ),
+            "Selected-element review complete",
+        )
 
     return app
 
