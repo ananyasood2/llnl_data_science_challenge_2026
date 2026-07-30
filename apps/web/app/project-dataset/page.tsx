@@ -589,7 +589,9 @@ export default function ProjectDatasetPage() {
         slotId,
         selectedFiles,
         slotId === "npyVolume" ? expectedDimensions : undefined,
-        slotId === "npyVolume" || slotId === "stlCad" ? tiffDatasetId : undefined,
+        slotId === "npyVolume" || slotId === "stlCad" || slotId === "graphJson"
+          ? tiffDatasetId
+          : undefined,
       );
 
       if (uploadSequenceBySlot.current[slotId] === requestId) {
@@ -697,6 +699,13 @@ export default function ProjectDatasetPage() {
       datasetId,
       jobId: jobPayload.job_id,
     });
+    const graphReferenceFileName =
+      slotStates.graphJson.result?.graph_reference_file_name ??
+      slotStates.graphJson.result?.file_names?.[0];
+
+    if (graphReferenceFileName) {
+      params.set("graphReference", graphReferenceFileName);
+    }
 
     if (voxelSizeKnown) {
       params.set(

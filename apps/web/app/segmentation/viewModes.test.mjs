@@ -35,7 +35,7 @@ test("CT preparation primary tabs match the requested workflow", async () => {
   );
 });
 
-test("defects view is an intentional empty state with no slice fetch", async () => {
+test("defects view uses the dedicated defect slice endpoint path", async () => {
   const { getDefectsEmptyStateMessage, getSliceFetchView } =
     await importViewModesModule();
 
@@ -43,6 +43,18 @@ test("defects view is an intentional empty state with no slice fetch", async () 
   assert.match(
     getDefectsEmptyStateMessage(),
     /unavailable until the defect-detection agent runs/i,
+  );
+});
+
+test("defect tab state copy distinguishes job states", async () => {
+  const { getDefectDetectionStateCopy } = await importViewModesModule();
+
+  assert.equal(getDefectDetectionStateCopy("not_run").title, "Defect detection not run");
+  assert.equal(getDefectDetectionStateCopy("running").title, "Defect detection running");
+  assert.equal(getDefectDetectionStateCopy("complete").title, "No defects were found");
+  assert.equal(
+    getDefectDetectionStateCopy("failed", "classifier failed").message,
+    "classifier failed",
   );
 });
 

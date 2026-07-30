@@ -82,6 +82,26 @@ test("workflow hrefs preserve current dataset and threshold query context", asyn
   assert.equal(buildWorkflowHref("/segmentation", ""), "/segmentation");
 });
 
+test("CT preparation shows the associated graph JSON filename", async () => {
+  const pageSource = await readFile(
+    new URL("./segmentation/SegmentationClient.tsx", import.meta.url),
+    "utf8",
+  );
+  const routeSource = await readFile(
+    new URL("./segmentation/page.tsx", import.meta.url),
+    "utf8",
+  );
+  const intakeSource = await readFile(
+    new URL("./project-dataset/page.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(routeSource, /graphReference: getParam\(params, "graphReference"/);
+  assert.match(intakeSource, /params\.set\("graphReference", graphReferenceFileName\)/);
+  assert.match(pageSource, /<dt>Graph reference<\/dt>/);
+  assert.match(pageSource, /analysisJob\?\.artifacts\?\.registered_graph\?\.path/);
+});
+
 test("no-context pages show CT empty state and 3D missing_struts fallback", async () => {
   const segmentationSource = await readFile(
     new URL("./segmentation/page.tsx", import.meta.url),

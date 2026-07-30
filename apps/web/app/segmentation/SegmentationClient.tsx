@@ -36,7 +36,7 @@ import {
   type HistogramScope,
 } from "./histogramChart";
 import {
-  getDefectsEmptyStateMessage,
+  getDefectDetectionStateCopy,
   getSliceFetchView,
   primaryViewModes,
   segmentationComparisonModes,
@@ -57,6 +57,7 @@ export type DatasetContext = {
   };
   voxelSizeMicron: string;
   scaleUnit: "micron" | "voxel";
+  graphReference: string | null;
 };
 
 export type SegmentationQueryParams = Record<string, string>;
@@ -79,6 +80,7 @@ type SliceViewerProps = {
   maskPreviewLoading: boolean;
   overlayEnabled: boolean;
   overlayOpacity: number;
+  defectJob: DefectJobSummary | null;
   onAxisChange: (axis: Axis) => void;
   onSliceIndexChange: (index: number) => void;
   onProbeClick: (coordinate: VolumeCoordinate) => void;
@@ -119,6 +121,8 @@ type VoxelProbeProps = {
   };
   intensity: number | null;
   maskValue: 0 | 1 | null;
+  defectCategory?: string | null;
+  defectStatus?: "none" | "flagged" | "not_run";
 };
 
 type VoxelNavigationProps = {
@@ -192,6 +196,19 @@ type HistogramFetchState = {
   message: string | null;
 };
 
+type DefectJobSummary = {
+  dataset_id: string;
+  status: "not_run" | "running" | "complete" | "failed";
+  total_flagged_elements: number;
+  total_flagged_voxels: number;
+  category_counts: Record<string, number>;
+  reference_available: boolean;
+  reference_message: string;
+  defect_artifact_path: string | null;
+  summary_path: string | null;
+  error: string | null;
+};
+
 type SavedSegmentation = {
   status: string;
   dataset_id: string;
@@ -211,6 +228,7 @@ type AnalysisJob = {
   progress: AnalysisJobStatus[];
   error: string | null;
   scale_unit: "pixels/voxels" | "microns";
+  artifacts?: Record<string, { path: string }>;
   segmentation: {
     threshold: number;
     foreground_voxel_count: number;
@@ -269,6 +287,19 @@ function getSliceUrl(
   )}/slices/${axis.toLowerCase()}/${sliceIndex}?${params.toString()}`;
 }
 
+function getDefectSliceUrl(
+  datasetId: string,
+  axis: Axis,
+  sliceIndex: number,
+  opacity: number,
+) {
+  const params = new URLSearchParams({ opacity: String(opacity) });
+
+  return `${getAnalysisApiUrl()}/v1/datasets/${encodeURIComponent(
+    datasetId,
+  )}/defect-slices/${axis.toLowerCase()}/${sliceIndex}?${params.toString()}`;
+}
+
 async function fetchSliceImage(
   datasetId: string,
   axis: Axis,
@@ -314,6 +345,45 @@ async function fetchSliceImage(
     }
 
     return { status: "ready" as const, imageUrl: payload.image_uri, message: null };
+  }
+
+  const blob = await response.blob();
+
+  return {
+    status: "ready" as const,
+    imageUrl: URL.createObjectURL(blob),
+    message: null,
+  };
+}
+
+async function fetchDefectSliceImage(
+  datasetId: string,
+  axis: Axis,
+  sliceIndex: number,
+  opacity: number,
+  signal: AbortSignal,
+) {
+  const response = await fetch(
+    getDefectSliceUrl(datasetId, axis, sliceIndex, opacity),
+    {
+      headers: {
+        Accept: "image/png, application/json",
+      },
+      signal,
+    },
+  );
+
+  if (response.status === 404 || response.status === 409) {
+    const payload = (await response.json().catch(() => null)) as { detail?: string } | null;
+    return {
+      status: "empty" as const,
+      imageUrl: null,
+      message: payload?.detail ?? "Defect detection has not completed.",
+    };
+  }
+
+  if (!response.ok) {
+    throw new Error(`Defect slice fetch failed with HTTP ${response.status}.`);
   }
 
   const blob = await response.blob();
@@ -428,6 +498,8 @@ async function fetchVoxelProbe(
   return (await response.json()) as VolumeCoordinate & {
     intensity: number;
     mask_value: 0 | 1;
+    defect_category: string | null;
+    defect_status: "none" | "flagged" | "not_run";
   };
 }
 
@@ -474,6 +546,44 @@ async function fetchLatestAnalysisJob(datasetId: string, signal: AbortSignal) {
   return (await response.json()) as AnalysisJob;
 }
 
+async function fetchLatestDefectJob(datasetId: string, signal: AbortSignal) {
+  const response = await fetch(
+    `${getAnalysisApiUrl()}/v1/datasets/${encodeURIComponent(
+      datasetId,
+    )}/defect-jobs/latest`,
+    {
+      headers: {
+        Accept: "application/json",
+      },
+      signal,
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(`Defect job fetch failed with HTTP ${response.status}.`);
+  }
+
+  return (await response.json()) as DefectJobSummary;
+}
+
+async function startDefectJob(datasetId: string) {
+  const response = await fetch(
+    `${getAnalysisApiUrl()}/v1/datasets/${encodeURIComponent(datasetId)}/defect-jobs`,
+    {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+      },
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(`Defect job failed with HTTP ${response.status}.`);
+  }
+
+  return (await response.json()) as DefectJobSummary;
+}
+
 function ViewModeTabs({ value, onChange }: ViewModeTabsProps) {
   return (
     <div className="view-tabs" role="tablist" aria-label="Slice view mode">
@@ -508,6 +618,7 @@ function SliceViewer({
   maskPreviewLoading,
   overlayEnabled,
   overlayOpacity,
+  defectJob,
   onAxisChange,
   onSliceIndexChange,
   onProbeClick,
@@ -569,6 +680,10 @@ function SliceViewer({
   const markerPosition = selectedMarker
     ? getMarkerPosition(axis, selectedMarker, bounds)
     : null;
+  const defectStateCopy = getDefectDetectionStateCopy(
+    defectJob?.status ?? "not_run",
+    defectJob?.error ?? defectJob?.reference_message,
+  );
 
   return (
     <section className="dataset-panel slice-viewer" aria-labelledby="slice-viewer-heading">
@@ -591,10 +706,12 @@ function SliceViewer({
       </div>
 
       <div className="slice-canvas">
-        {viewMode === "defects" ? (
+        {viewMode === "defects" && defectJob?.status !== "complete" ? (
           <div className="slice-state slice-state-empty" role="status">
-            <strong>Defects unavailable</strong>
-            <span>{getDefectsEmptyStateMessage()}</span>
+            <strong>
+              {defectStateCopy.title}
+            </strong>
+            <span>{defectStateCopy.message}</span>
           </div>
         ) : status === "ready" && imageUrl ? (
           <div
@@ -760,6 +877,81 @@ function SegmentationOverlayToggle({
   );
 }
 
+function DefectDetectionPanel({
+  job,
+  error,
+  disabled,
+  opacity,
+  onRun,
+  onOpacityChange,
+}: {
+  job: DefectJobSummary | null;
+  error: string | null;
+  disabled: boolean;
+  opacity: number;
+  onRun: () => void;
+  onOpacityChange: (opacity: number) => void;
+}) {
+  const status = job?.status ?? "not_run";
+  const categoryEntries = Object.entries(job?.category_counts ?? {});
+
+  return (
+    <section className="dataset-panel compact-panel" aria-labelledby="defect-agent-heading">
+      <div className="section-heading">
+        <p className="panel-kicker">Defects</p>
+        <h2 id="defect-agent-heading">Detection agent</h2>
+      </div>
+      <dl className="metric-list">
+        <div>
+          <dt>Status</dt>
+          <dd>{status === "not_run" ? "Not run" : status}</dd>
+        </div>
+        <div>
+          <dt>Flagged elements</dt>
+          <dd>{job?.total_flagged_elements ?? 0}</dd>
+        </div>
+        <div>
+          <dt>Reference</dt>
+          <dd>{job?.reference_available ? "Available" : "Unavailable"}</dd>
+        </div>
+      </dl>
+      <p className="panel-note">
+        {error ?? job?.reference_message ?? "Run after segmentation and skeletonization complete."}
+      </p>
+      <label className="opacity-control">
+        <span>Overlay opacity</span>
+        <input
+          type="range"
+          min="0"
+          max="0.95"
+          step="0.05"
+          value={opacity}
+          onChange={(event) => onOpacityChange(Number(event.target.value))}
+        />
+      </label>
+      {categoryEntries.length ? (
+        <div className="defect-legend" aria-label="Defect legend">
+          {categoryEntries.map(([category, count]) => (
+            <span key={category}>
+              <i className={`defect-swatch defect-${category}`} />
+              {category}: {count}
+            </span>
+          ))}
+        </div>
+      ) : status === "complete" ? (
+        <p className="panel-note">No defects were found.</p>
+      ) : null}
+      <button
+        type="button"
+        onClick={onRun}
+        disabled={disabled || status === "running"}
+      >
+        {status === "running" ? "Running" : "Run Defect Detection Agent"}
+      </button>
+    </section>
+  );
+}
+
 function VoxelNavigation({
   bounds,
   values,
@@ -816,6 +1008,8 @@ function VoxelProbe({
   coordinate,
   intensity,
   maskValue,
+  defectCategory,
+  defectStatus,
 }: VoxelProbeProps) {
   return (
     <section className="dataset-panel compact-panel" aria-labelledby={headingId}>
@@ -837,6 +1031,16 @@ function VoxelProbe({
         <div>
           <dt>Mask value</dt>
           <dd>{maskValue ?? "Pending"}</dd>
+        </div>
+        <div>
+          <dt>Defect status</dt>
+          <dd>
+            {defectStatus === "flagged"
+              ? defectCategory
+              : defectStatus === "none"
+                ? "None"
+                : "Not run"}
+          </dd>
         </div>
       </dl>
     </section>
@@ -1260,6 +1464,8 @@ export function SegmentationClient({
   });
   const [analysisJob, setAnalysisJob] = useState<AnalysisJob | null>(null);
   const [analysisJobError, setAnalysisJobError] = useState<string | null>(null);
+  const [defectJob, setDefectJob] = useState<DefectJobSummary | null>(null);
+  const [defectJobError, setDefectJobError] = useState<string | null>(null);
   const lastHoverProbeAt = useRef(0);
   const pendingHoverTimeout = useRef<number | null>(null);
   const latestHoverCoordinate = useRef<VolumeCoordinate | null>(null);
@@ -1288,6 +1494,9 @@ export function SegmentationClient({
   const continueHref = structureAnalysisReady
     ? buildStructureAnalysisHref(datasetContext, segmentationSave.result, searchParams)
     : null;
+  const graphReferenceFileName =
+    analysisJob?.artifacts?.registered_graph?.path ??
+    datasetContext.graphReference;
 
   useEffect(() => {
     if (!datasetContext.datasetId) {
@@ -1344,6 +1553,33 @@ export function SegmentationClient({
   }, [datasetContext.datasetId]);
 
   useEffect(() => {
+    if (!datasetContext.datasetId) {
+      return;
+    }
+
+    const controller = new AbortController();
+
+    fetchLatestDefectJob(datasetContext.datasetId, controller.signal)
+      .then((job) => {
+        setDefectJob(job);
+        setDefectJobError(job.status === "failed" ? job.error : null);
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) {
+          return;
+        }
+
+        setDefectJobError(
+          error instanceof Error
+            ? error.message
+            : "Unable to load the latest defect job.",
+        );
+      });
+
+    return () => controller.abort();
+  }, [datasetContext.datasetId]);
+
+  useEffect(() => {
     let localObjectUrl: string | null = null;
 
     if (!datasetContext.datasetId) {
@@ -1352,7 +1588,7 @@ export function SegmentationClient({
 
     const sliceView = getSliceFetchView(viewMode, comparisonMode);
 
-    if (!sliceView) {
+    if (!sliceView && viewMode !== "defects") {
       return;
     }
 
@@ -1366,13 +1602,24 @@ export function SegmentationClient({
       message: `Requesting ${viewMode} slice ${boundedSliceIndex} on ${axis} axis.`,
     });
 
-    fetchSliceImage(
-      datasetContext.datasetId,
-      axis,
-      boundedSliceIndex,
-      sliceView,
-      controller.signal,
-    )
+    const request =
+      viewMode === "defects"
+        ? fetchDefectSliceImage(
+            datasetContext.datasetId,
+            axis,
+            boundedSliceIndex,
+            overlayOpacity,
+            controller.signal,
+          )
+        : fetchSliceImage(
+            datasetContext.datasetId,
+            axis,
+            boundedSliceIndex,
+            sliceView ?? "original",
+            controller.signal,
+          );
+
+    request
       .then((nextState) => {
         if (nextState.imageUrl?.startsWith("blob:")) {
           localObjectUrl = nextState.imageUrl;
@@ -1402,7 +1649,14 @@ export function SegmentationClient({
         URL.revokeObjectURL(localObjectUrl);
       }
     };
-  }, [axis, boundedSliceIndex, comparisonMode, datasetContext.datasetId, viewMode]);
+  }, [
+    axis,
+    boundedSliceIndex,
+    comparisonMode,
+    datasetContext.datasetId,
+    overlayOpacity,
+    viewMode,
+  ]);
 
   useEffect(() => {
     let localObjectUrl: string | null = null;
@@ -1564,6 +1818,8 @@ export function SegmentationClient({
           },
           intensity: nextProbe.intensity,
           maskValue: nextProbe.mask_value,
+          defectCategory: nextProbe.defect_category,
+          defectStatus: nextProbe.defect_status,
         }));
       })
       .catch(() => {
@@ -1611,6 +1867,8 @@ export function SegmentationClient({
           },
           intensity: nextProbe.intensity,
           maskValue: nextProbe.mask_value,
+          defectCategory: nextProbe.defect_category,
+          defectStatus: nextProbe.defect_status,
         }));
       })
       .catch(() => {
@@ -1711,6 +1969,53 @@ export function SegmentationClient({
       });
   }
 
+  function handleRunDefectDetection() {
+    if (!datasetContext.datasetId) {
+      setDefectJobError("Dataset has not been persisted yet.");
+      return;
+    }
+
+    setDefectJob((current) => ({
+      dataset_id: datasetContext.datasetId ?? "",
+      status: "running",
+      total_flagged_elements: current?.total_flagged_elements ?? 0,
+      total_flagged_voxels: current?.total_flagged_voxels ?? 0,
+      category_counts: current?.category_counts ?? {},
+      reference_available: current?.reference_available ?? false,
+      reference_message: current?.reference_message ?? "Defect detection is running.",
+      defect_artifact_path: current?.defect_artifact_path ?? null,
+      summary_path: current?.summary_path ?? null,
+      error: null,
+    }));
+    setDefectJobError(null);
+
+    startDefectJob(datasetContext.datasetId)
+      .then((job) => {
+        setDefectJob(job);
+        setDefectJobError(job.status === "failed" ? job.error : null);
+        setViewMode("defects");
+      })
+      .catch((error: unknown) => {
+        setDefectJobError(
+          error instanceof Error
+            ? error.message
+            : "Unable to run defect detection.",
+        );
+        setDefectJob((current) =>
+          current
+            ? {
+                ...current,
+                status: "failed",
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : "Unable to run defect detection.",
+              }
+            : null,
+        );
+      });
+  }
+
   function handleVoxelNavigation() {
     const validation = validateVoxelCoordinateInput(voxelInput, volumeBounds);
     setVoxelInputErrors(validation.errors);
@@ -1772,6 +2077,10 @@ export function SegmentationClient({
               <dd>{datasetContext.datasetId ?? "Not persisted"}</dd>
             </div>
             <div>
+              <dt>Graph reference</dt>
+              <dd>{graphReferenceFileName ?? "Not associated"}</dd>
+            </div>
+            <div>
               <dt>Preparation status</dt>
               <dd>
                 {preparationStatus}
@@ -1814,6 +2123,7 @@ export function SegmentationClient({
               }
               overlayEnabled={overlayEnabled}
               overlayOpacity={overlayOpacity}
+              defectJob={defectJob}
               onAxisChange={(nextAxis) => {
                 setAxis(nextAxis);
                 resetViewport();
@@ -1859,12 +2169,26 @@ export function SegmentationClient({
                   onOpacityChange={setOverlayOpacity}
                 />
               ) : null}
+              {viewMode === "defects" ? (
+                <DefectDetectionPanel
+                  job={defectJob}
+                  error={defectJobError}
+                  disabled={
+                    !analysisJob?.segmentation || !analysisJob?.skeletonization
+                  }
+                  opacity={overlayOpacity}
+                  onRun={handleRunDefectDetection}
+                  onOpacityChange={setOverlayOpacity}
+                />
+              ) : null}
               <VoxelProbe
                 headingId={probe.headingId}
                 title={probe.title}
                 coordinate={probe.coordinate}
                 intensity={probe.intensity}
                 maskValue={probe.maskValue}
+                defectCategory={probe.defectCategory}
+                defectStatus={probe.defectStatus}
               />
               <VoxelNavigation
                 bounds={volumeBounds}
@@ -1888,6 +2212,8 @@ export function SegmentationClient({
                 coordinate={selectedProbe.coordinate}
                 intensity={selectedProbe.intensity}
                 maskValue={selectedProbe.maskValue}
+                defectCategory={selectedProbe.defectCategory}
+                defectStatus={selectedProbe.defectStatus}
               />
             </div>
           </div>

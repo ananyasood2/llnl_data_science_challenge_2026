@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import struct
 from io import BytesIO
@@ -57,6 +58,12 @@ async def _post_intake(
             files=multipart_files,
             headers={"Origin": origin} if origin else None,
         )
+
+
+async def _client_get(path: str) -> httpx.Response:
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        return await client.get(path)
 
 
 def _npy_bytes(array: np.ndarray | None = None) -> bytes:
@@ -135,7 +142,10 @@ def _assert_saved_dataset(payload: dict, upload_storage_root, file_names: list[s
 
     dataset_dir = upload_storage_root / dataset_id
     assert dataset_dir.is_dir()
-    assert sorted(path.name for path in dataset_dir.iterdir()) == sorted(file_names)
+    saved_names = [
+        path.name for path in dataset_dir.iterdir() if path.name != "dataset_manifest.json"
+    ]
+    assert sorted(saved_names) == sorted(file_names)
 
 
 def test_dataset_intake_extracts_npy_metadata(_upload_storage_root) -> None:
@@ -438,6 +448,63 @@ def test_dataset_intake_stores_stl_with_existing_tiff_dataset(_upload_storage_ro
     assert payload["valid"] is True
     assert payload["dataset_id"] == dataset_id
     assert (_upload_storage_root / dataset_id / "design-reference.stl").is_file()
+
+
+def test_dataset_intake_stores_graph_json_with_existing_tiff_dataset(
+    _upload_storage_root,
+) -> None:
+    tiff_response = asyncio.run(
+        _post_intake(
+            "ctTiffStack",
+            [("stack.tif", _tiff_bytes(np.zeros((2, 3, 4), dtype=np.uint16)), "image/tiff")],
+        )
+    )
+    dataset_id = tiff_response.json()["dataset_id"]
+
+    graph_response = asyncio.run(
+        _post_intake(
+            "graphJson",
+            [
+                (
+                    "registered graph.json",
+                    b'{"junctions": [], "struts": []}',
+                    "application/json",
+                )
+            ],
+            dataset_id=dataset_id,
+        )
+    )
+
+    assert graph_response.status_code == 200
+    payload = graph_response.json()
+    assert payload["valid"] is True
+    assert payload["dataset_id"] == dataset_id
+    assert payload["graph_reference_available"] is True
+    assert payload["graph_reference_file_name"] == "registered_graph.json"
+    dataset_dir = _upload_storage_root / dataset_id
+    assert (dataset_dir / "registered_graph.json").is_file()
+    manifest = json.loads((dataset_dir / "dataset_manifest.json").read_text())
+    assert manifest["graph_reference_available"] is True
+    assert manifest["graph_reference_file_name"] == "registered_graph.json"
+
+    manifest_response = asyncio.run(
+        _client_get(f"/v1/datasets/{dataset_id}/manifest")
+    )
+    assert manifest_response.status_code == 200
+    assert manifest_response.json()["graph_reference_available"] is True
+    assert manifest_response.json()["graph_reference_file_name"] == "registered_graph.json"
+
+
+def test_dataset_intake_rejects_graph_json_without_existing_tiff_dataset() -> None:
+    response = asyncio.run(
+        _post_intake(
+            "graphJson",
+            [("registered.json", b'{"junctions": [], "struts": []}', "application/json")],
+        )
+    )
+
+    assert response.status_code == 422
+    assert "associated with an existing CT dataset" in response.json()["detail"]
 
 
 @pytest.mark.parametrize(

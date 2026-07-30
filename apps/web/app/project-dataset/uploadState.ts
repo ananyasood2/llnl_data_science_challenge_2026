@@ -20,6 +20,8 @@ export type IntakeResult = {
   slot?: DatasetSlotId;
   file_names?: string[];
   generated_file_names?: string[];
+  graph_reference_available?: boolean;
+  graph_reference_file_name?: string | null;
   fileType?: string;
   dimensions?: IntakeDimensions;
   intensity_range?: IntakeRange;

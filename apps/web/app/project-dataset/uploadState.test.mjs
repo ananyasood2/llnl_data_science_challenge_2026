@@ -113,3 +113,12 @@ test("file input is cleared so re-selecting the same file triggers validation", 
   assert.match(pageSource, /event\.currentTarget\.value = ""/);
   assert.match(pageSource, /onFileChange\(file\.id, selectedFiles\)/);
 });
+
+test("graph JSON upload is associated with the persisted TIFF dataset", async () => {
+  const pageSource = await readFile(new URL("./page.tsx", import.meta.url), "utf8");
+
+  assert.match(
+    pageSource,
+    /slotId === "npyVolume" \|\| slotId === "stlCad" \|\| slotId === "graphJson"/,
+  );
+});

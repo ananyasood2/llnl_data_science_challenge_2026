@@ -52,6 +52,7 @@ export default async function SegmentationPage({
     },
     voxelSizeMicron: getParam(params, "voxelSizeMicron", "unknown"),
     scaleUnit,
+    graphReference: getParam(params, "graphReference", "") || null,
   };
 
   if (!datasetContext.datasetId) {

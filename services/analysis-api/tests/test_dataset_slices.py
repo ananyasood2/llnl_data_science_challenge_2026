@@ -484,6 +484,8 @@ def test_voxel_probe_returns_real_intensity_and_mask_value() -> None:
         "z": 1,
         "intensity": 23.0,
         "mask_value": 1,
+        "defect_category": None,
+        "defect_status": "not_run",
     }
 
 

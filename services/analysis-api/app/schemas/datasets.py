@@ -61,6 +61,8 @@ class DatasetIntakeResponse(BaseModel):
     slot: DatasetSlot
     file_names: list[str]
     generated_file_names: list[str] = Field(default_factory=list)
+    graph_reference_available: bool = False
+    graph_reference_file_name: str | None = None
     file_type: str | None = None
     dimensions: DatasetDimensions | None = None
     intensity_range: IntensityRange | None = None
