@@ -39,6 +39,7 @@ print(json.dumps({
         "create_measurement_context",
         "get_measurement_context",
         "get_thickness_summary",
+        "inspect_selected_strut",
         "list_out_of_spec_struts",
         "get_relative_density",
         "compare_measurements_to_design",

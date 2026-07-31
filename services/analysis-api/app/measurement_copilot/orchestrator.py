@@ -17,7 +17,10 @@ from .tools import TOOL_REGISTRY
 SYSTEM_PROMPT = """You are the Measurement Copilot for registered lattice CT inspection.
 The backend tools are the only scientific authority. Never calculate, estimate, or invent a
 measurement yourself. Use Thickness Analysis Agent tools for distributions, cutoffs, and
-strut rankings. Use Relative Density Agent tools for segmented/enclosing volume and density.
+strut rankings. For a selected/clicked strut, use inspect_selected_strut; it is bound to the
+immutable context selection, and its neighbors mean shared registered endpoint nodes only,
+not geometric proximity or causal dependence. Use Relative Density Agent tools for
+segmented/enclosing volume and density.
 For broad design-match questions, obtain thickness, density, policy comparison, and relevant
 outliers before answering. State that pass/warn/fail is provisional. Cite claims as
 [tool_name:tool_run_id]. Return a concise engineering conclusion, evidence, caveat, and next action.
@@ -41,6 +44,21 @@ OPENAI_TOOLS: list[dict[str, Any]] = [
         "type": "function",
         "name": "get_thickness_summary",
         "description": "Get deterministic strut thickness statistics and histogram evidence.",
+        "parameters": {
+            "type": "object",
+            "properties": {"context_id": {"type": "string"}},
+            "required": ["context_id"],
+            "additionalProperties": False,
+        },
+        "strict": True,
+    },
+    {
+        "type": "function",
+        "name": "inspect_selected_strut",
+        "description": (
+            "Inspect the strut already selected in the immutable context, including its "
+            "persisted measurement, weak-ECDF rank, cutoffs, and shared-endpoint neighbors."
+        ),
         "parameters": {
             "type": "object",
             "properties": {"context_id": {"type": "string"}},
@@ -124,7 +142,29 @@ OPENAI_TOOLS: list[dict[str, Any]] = [
 ]
 
 
-def _local_plan(message: str) -> list[tuple[str, dict[str, Any]]]:
+def _is_selected_strut_question(message: str) -> bool:
+    normalized = message.lower()
+    return any(
+        phrase in normalized
+        for phrase in (
+            "selected strut",
+            "clicked strut",
+            "this strut",
+            "this element",
+            "its neighbors",
+            "neighboring struts",
+            "neighbor struts",
+            "percentile rank",
+            "where does it rank",
+        )
+    )
+
+
+def _local_plan(
+    message: str,
+    *,
+    selected_strut_available: bool = False,
+) -> list[tuple[str, dict[str, Any]]]:
     normalized = message.lower()
     broad = any(
         phrase in normalized
@@ -137,6 +177,8 @@ def _local_plan(message: str) -> list[tuple[str, dict[str, Any]]]:
             "does this print",
         )
     )
+    if _is_selected_strut_question(message) and selected_strut_available:
+        return [("inspect_selected_strut", {})]
     if any(word in normalized for word in ("report", "export", "download")):
         return [
             ("get_thickness_summary", {}),
@@ -213,6 +255,7 @@ def _local_answer(message: str, results: list[dict[str, Any]]) -> str:
     density = by_name.get("get_relative_density")
     sensitivity = by_name.get("analyze_measurement_sensitivity")
     outliers = by_name.get("list_out_of_spec_struts")
+    selected = by_name.get("inspect_selected_strut")
     report = by_name.get("create_measurement_report")
 
     if report:
@@ -230,6 +273,62 @@ def _local_answer(message: str, results: list[dict[str, Any]]) -> str:
             f"Cutoff sensitivity for the persisted thickness distribution: {values}. "
             "This changes the comparison cutoff, not the CT segmentation. "
             f"{_citation(sensitivity)}"
+        )
+    if selected:
+        summary = selected["summary"]
+        strut = summary["strut"]
+        neighbors = summary["neighbors"]
+        if not strut["measurement_eligible"]:
+            answer = (
+                f"Selected strut `{strut['strut_id']}` has persisted analysis status "
+                f"`{strut['analysis_status']}` but no eligible measured thickness, so its "
+                "percentile and cutoff differences are unavailable."
+            )
+        else:
+            target = strut["target_comparison"]
+            critical = strut["critical_cutoff_comparison"]
+            user_cutoff = strut["user_cutoff_comparison"]
+            percentile = strut["percentile"]
+            answer = (
+                f"Selected strut `{strut['strut_id']}` has persisted analysis status "
+                f"`{strut['analysis_status']}` and measures "
+                f"{strut['measured_thickness_um']:.3f} µm "
+                f"({target['difference_um']:+.3f} µm versus the "
+                f"{target['target_um']:.3f} µm target). It is "
+                f"{'below' if critical['below'] else 'not below'} the "
+                f"{critical['cutoff_um']:.3f} µm critical cutoff "
+                f"({critical['difference_um']:+.3f} µm) and "
+                f"{'below' if user_cutoff['below'] else 'not below'} the active "
+                f"{user_cutoff['cutoff_um']:.3f} µm user cutoff "
+                f"({user_cutoff['difference_um']:+.3f} µm). Its weak-ECDF rank is "
+                f"{percentile['rank_percent']:.3f}% among "
+                f"{percentile['population_count']} eligible struts."
+            )
+        answer += (
+            f" Of {neighbors['total_count']} registered shared-endpoint neighbors, "
+            f"{neighbors['eligible_count']} have eligible measured thickness and "
+            f"{neighbors['excluded_count']} are excluded."
+        )
+        if neighbors["median_thickness_um"] is not None:
+            answer += (
+                f" The median across the {neighbors['eligible_count']} measured neighbors is "
+                f"{neighbors['median_thickness_um']:.3f} µm"
+            )
+            if neighbors["selected_minus_median_um"] is not None:
+                answer += (
+                    f"; the selected strut is "
+                    f"{neighbors['selected_minus_median_um']:+.3f} µm from that median."
+                )
+            else:
+                answer += "."
+        else:
+            answer += " A measured-neighbor median comparison is unavailable."
+        return answer + (
+            f" Evidence is qualified to analysis revision "
+            f"`{selected['analysis_revision'][:12]}`. {_citation(selected)}"
+        ) + (
+            " Neighbor comparison is registered one-hop topology only; it does not imply "
+            "geometric proximity, causality, or statistical independence."
         )
     if comparison:
         summary = comparison["summary"]
@@ -278,9 +377,13 @@ def _local_answer(message: str, results: list[dict[str, Any]]) -> str:
 
 
 def _run_local(message: str, context_id: str) -> tuple[str, list[dict[str, Any]], list[str]]:
+    context = measurement_context_store.get(context_id)
     results = [
         _execute_tool(name, arguments, context_id)
-        for name, arguments in _local_plan(message)
+        for name, arguments in _local_plan(
+            message,
+            selected_strut_available=context.selected_strut_id is not None,
+        )
     ]
     return _local_answer(message, results), results, []
 
@@ -301,6 +404,10 @@ def _run_openai(message: str, context_id: str) -> tuple[str, list[dict[str, Any]
     ]
     results: list[dict[str, Any]] = []
     warnings: list[str] = []
+    context = measurement_context_store.get(context_id)
+    selected_result_required = (
+        context.selected_strut_id is not None and _is_selected_strut_question(message)
+    )
     for _ in range(6):
         response = client.responses.create(
             model=settings.measurement_copilot_model,
@@ -314,7 +421,27 @@ def _run_openai(message: str, context_id: str) -> tuple[str, list[dict[str, Any]
         if not calls:
             text = str(getattr(response, "output_text", "")).strip()
             if results and text:
-                return text, results, warnings
+                if not selected_result_required:
+                    return text, results, warnings
+                selected_results = [
+                    result
+                    for result in results
+                    if result["tool_name"] == "inspect_selected_strut"
+                ]
+                if any(_citation(result) in text for result in selected_results):
+                    return text, results, warnings
+                if not selected_results:
+                    selected_result = _execute_tool(
+                        "inspect_selected_strut",
+                        {},
+                        context_id,
+                    )
+                    results = [selected_result]
+                warnings.append(
+                    "The model response omitted required selected-strut evidence or "
+                    "its exact citation; deterministic narration was used."
+                )
+                return _local_answer(message, results), results, warnings
             break
         inputs.extend(response.output)
         for call in calls:
@@ -336,6 +463,23 @@ def _run_openai(message: str, context_id: str) -> tuple[str, list[dict[str, Any]
         warnings.extend(local_warnings)
         warnings.append("The model returned no tool evidence; deterministic routing was used.")
         return local_answer, results, warnings
+    if selected_result_required:
+        selected_result = next(
+            (
+                result
+                for result in results
+                if result["tool_name"] == "inspect_selected_strut"
+            ),
+            None,
+        )
+        if selected_result is None:
+            selected_result = _execute_tool("inspect_selected_strut", {}, context_id)
+            results = [selected_result]
+        warnings.append(
+            "The model did not return a supported selected-strut answer; "
+            "deterministic narration was used."
+        )
+        return _local_answer(message, results), results, warnings
     warnings.append("The model response was incomplete; a deterministic evidence summary was used.")
     return _local_answer(message, results), results, warnings
 

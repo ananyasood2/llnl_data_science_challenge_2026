@@ -1,4 +1,4 @@
 interface:
   display_name: "Thickness Analysis"
-  short_description: "Analyze registered strut thickness evidence"
-  default_prompt: "Use $thickness-analysis to explain the registered strut thickness distribution."
+  short_description: "Inspect registered strut thickness evidence"
+  default_prompt: "Use $thickness-analysis to inspect a selected strut against its population and immediate topology neighbors."

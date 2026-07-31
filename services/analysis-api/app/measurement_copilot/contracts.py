@@ -28,6 +28,13 @@ class MeasurementContextCreate(BaseModel):
             raise ValueError("measurement context values must be finite")
         return value
 
+    @field_validator("selected_strut_id", mode="before")
+    @classmethod
+    def selected_strut_id_is_not_boolean(cls, value: Any) -> Any:
+        if isinstance(value, bool):
+            raise ValueError("selected_strut_id must be an integer or string identifier, not a boolean")
+        return value
+
 
 class StoredMeasurementContext(MeasurementContextCreate):
     model_config = ConfigDict(extra="forbid")
@@ -78,4 +85,3 @@ class MeasurementCopilotResponse(BaseModel):
     tool_results: list[MeasurementToolEnvelope]
     viewer_actions: list[dict[str, Any]]
     warnings: list[str]
-

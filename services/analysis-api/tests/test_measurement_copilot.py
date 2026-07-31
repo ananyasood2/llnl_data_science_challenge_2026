@@ -12,6 +12,8 @@ import numpy as np
 import pytest
 from fastapi import HTTPException
 
+from lattice_pipeline.cache import ANALYSIS_VERSION
+
 from app.core.config import get_settings
 from app.main import app
 from app.measurement_copilot.contracts import MeasurementContextCreate
@@ -35,14 +37,17 @@ def _fixture_dataset(root: Path) -> None:
                 "id": index,
                 "status": "thin" if thickness < 350 else "healthy",
                 "measured_thickness_um": thickness,
+                "design_thickness_um": 350.0,
                 "thickness_ratio": thickness / 350,
+                "node_a": index - 1,
+                "node_b": index,
                 "polyline": [[1, index, 1], [8, index, 8]],
             }
         )
     analysis = {
         "meta": {
             "cache_fingerprint": "agent-fixture-revision",
-            "analysis_version": 7,
+            "analysis_version": ANALYSIS_VERSION,
             "analysis_stride": 1,
             "voxel_size_mm": 0.1,
             "voxel_size_source": "test_fixture",
@@ -118,6 +123,72 @@ def test_mcp_context_entry_point_rejects_unknown_dataset(tmp_path, monkeypatch) 
         get_settings.cache_clear()
 
     assert error.value.status_code == 404
+
+
+def test_context_validates_and_canonicalizes_selected_strut(tmp_path, monkeypatch) -> None:
+    _configure(tmp_path, monkeypatch)
+    try:
+        created = create_measurement_context(
+            dataset_id="agent_sample",
+            selected_strut_id="2",
+        )
+        selected = TOOL_REGISTRY["inspect_selected_strut"](
+            context_id=created["context_id"]
+        )
+        with pytest.raises(HTTPException) as unknown_error:
+            create_measurement_context(
+                dataset_id="agent_sample",
+                selected_strut_id=999,
+            )
+        with pytest.raises(HTTPException) as boolean_error:
+            create_measurement_context(
+                dataset_id="agent_sample",
+                selected_strut_id=True,
+            )
+    finally:
+        get_settings.cache_clear()
+
+    assert created["selected_strut_id"] == 2
+    assert selected["summary"]["strut"]["strut_id"] == 2
+    assert selected["summary"]["strut"]["percentile"]["rank_percent"] == 40.0
+    assert selected["summary"]["neighbors"]["total_count"] == 2
+    assert selected["elements"][0]["element_role"] == "selected"
+    assert {item["element_role"] for item in selected["elements"][1:]} == {"neighbor"}
+    assert "shared endpoint" in " ".join(selected["warnings"]).lower()
+    assert unknown_error.value.status_code == 404
+    assert boolean_error.value.status_code == 422
+
+
+def test_selected_strut_question_uses_context_only_tool_and_citation(tmp_path, monkeypatch) -> None:
+    _configure(tmp_path, monkeypatch)
+    try:
+        context = create_measurement_context(
+            dataset_id="agent_sample",
+            selected_strut_id=2,
+        )
+        result = run_measurement_copilot(
+            "How does this selected strut compare with its neighbors and where does it rank?",
+            context["context_id"],
+        )
+    finally:
+        get_settings.cache_clear()
+
+    assert [item["tool_name"] for item in result["tool_results"]] == [
+        "inspect_selected_strut"
+    ]
+    assert "[inspect_selected_strut:mtool_" in result["answer"]
+    assert "persisted analysis status `thin`" in result["answer"]
+    assert "below the 300.000 µm critical cutoff" in result["answer"]
+    assert "below the active 350.000 µm user cutoff" in result["answer"]
+    assert (
+        "Of 2 registered shared-endpoint neighbors, 2 have eligible measured "
+        "thickness and 0 are excluded."
+        in result["answer"]
+    )
+    assert "median across the 2 measured neighbors" in result["answer"]
+    assert "analysis revision `agent-fixtur`" in result["answer"]
+    assert "topology only" in result["answer"].lower()
+    assert result["viewer_actions"] == [{"type": "highlight_struts", "strut_ids": [2]}]
 
 
 def test_mcp_context_drives_all_measurement_evidence_tools(tmp_path, monkeypatch) -> None:
@@ -274,7 +345,155 @@ def test_stale_context_is_rejected(tmp_path, monkeypatch) -> None:
     assert result.status_code == 409
 
 
-def test_openai_responses_loop_executes_registered_tools_without_trusting_model_scope(
+def test_openai_selected_strut_answer_requires_actual_tool_run_citation(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    _configure(tmp_path, monkeypatch)
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key-not-sent")
+    get_settings.cache_clear()
+    observed_requests = []
+
+    class FakeResponses:
+        def create(self, **kwargs):
+            observed_requests.append(kwargs)
+            if len(observed_requests) == 1:
+                return SimpleNamespace(
+                    output=[
+                        SimpleNamespace(
+                            type="function_call",
+                            name="inspect_selected_strut",
+                            arguments=json.dumps({"context_id": "mctx_untrusted"}),
+                            call_id="call_fixture",
+                        )
+                    ],
+                    output_text="",
+                )
+            tool_output = next(
+                item
+                for item in kwargs["input"]
+                if isinstance(item, dict)
+                and item.get("type") == "function_call_output"
+            )
+            tool_result = json.loads(tool_output["output"])
+            citation = (
+                f"[inspect_selected_strut:{tool_result['tool_run_id']}]"
+            )
+            return SimpleNamespace(
+                output=[],
+                output_text=f"Selected-strut evidence is available {citation}.",
+            )
+
+    class FakeOpenAI:
+        def __init__(self, api_key):
+            assert api_key == "test-key-not-sent"
+            self.responses = FakeResponses()
+
+    import openai
+
+    monkeypatch.setattr(openai, "OpenAI", FakeOpenAI)
+    try:
+        context = create_measurement_context(
+            dataset_id="agent_sample",
+            selected_strut_id=2,
+        )
+        context_id = context["context_id"]
+        result = run_measurement_copilot(
+            "Analyze this selected strut.",
+            context_id,
+        )
+    finally:
+        get_settings.cache_clear()
+
+    assert result["mode"] == "openai-tool-calling"
+    assert result["tool_results"][0]["context_id"] == context_id
+    tool_result = result["tool_results"][0]
+    assert tool_result["tool_name"] == "inspect_selected_strut"
+    assert (
+        f"[inspect_selected_strut:{tool_result['tool_run_id']}]"
+        in result["answer"]
+    )
+    assert observed_requests[0]["model"] == "gpt-5.6-terra"
+    assert observed_requests[0]["reasoning"] == {"effort": "medium"}
+    assert observed_requests[0]["tools"]
+    outputs = observed_requests[1]["input"]
+    assert any(
+        isinstance(item, dict)
+        and item.get("type") == "function_call_output"
+        and item.get("call_id") == "call_fixture"
+        for item in outputs
+    )
+
+
+def test_openai_selected_strut_with_wrong_citation_uses_deterministic_answer(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    _configure(tmp_path, monkeypatch)
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key-not-sent")
+    get_settings.cache_clear()
+    observed_requests = []
+
+    class FakeResponses:
+        def create(self, **kwargs):
+            observed_requests.append(kwargs)
+            if len(observed_requests) == 1:
+                return SimpleNamespace(
+                    output=[
+                        SimpleNamespace(
+                            type="function_call",
+                            name="inspect_selected_strut",
+                            arguments=json.dumps({"context_id": "mctx_untrusted"}),
+                            call_id="call_fixture",
+                        )
+                    ],
+                    output_text="",
+                )
+            return SimpleNamespace(
+                output=[],
+                output_text=(
+                    "Selected-strut evidence is available "
+                    "[inspect_selected_strut:mtool_fabricated]."
+                ),
+            )
+
+    class FakeOpenAI:
+        def __init__(self, api_key):
+            assert api_key == "test-key-not-sent"
+            self.responses = FakeResponses()
+
+    import openai
+
+    monkeypatch.setattr(openai, "OpenAI", FakeOpenAI)
+    try:
+        context = create_measurement_context(
+            dataset_id="agent_sample",
+            selected_strut_id=2,
+        )
+        result = run_measurement_copilot(
+            "Analyze this selected strut and its neighbors.",
+            context["context_id"],
+        )
+    finally:
+        get_settings.cache_clear()
+
+    tool_result = result["tool_results"][0]
+    actual_citation = (
+        f"[inspect_selected_strut:{tool_result['tool_run_id']}]"
+    )
+    assert result["mode"] == "openai-tool-calling"
+    assert tool_result["tool_name"] == "inspect_selected_strut"
+    assert actual_citation in result["answer"]
+    assert "mtool_fabricated" not in result["answer"]
+    assert "topology only" in result["answer"].lower()
+    assert any(
+        "exact citation" in warning.lower()
+        and "deterministic narration" in warning.lower()
+        for warning in result["warnings"]
+    )
+
+
+def test_openai_selected_strut_with_wrong_tool_runs_required_inspection(
     tmp_path,
     monkeypatch,
 ) -> None:
@@ -298,11 +517,18 @@ def test_openai_responses_loop_executes_registered_tools_without_trusting_model_
                     ],
                     output_text="",
                 )
+            tool_output = next(
+                item
+                for item in kwargs["input"]
+                if isinstance(item, dict)
+                and item.get("type") == "function_call_output"
+            )
+            tool_result = json.loads(tool_output["output"])
             return SimpleNamespace(
                 output=[],
                 output_text=(
                     "Thickness evidence is available "
-                    "[get_thickness_summary:mtool_fixture]."
+                    f"[get_thickness_summary:{tool_result['tool_run_id']}]."
                 ),
             )
 
@@ -315,20 +541,28 @@ def test_openai_responses_loop_executes_registered_tools_without_trusting_model_
 
     monkeypatch.setattr(openai, "OpenAI", FakeOpenAI)
     try:
-        context_id = _context_id()
-        result = run_measurement_copilot("Analyze thickness.", context_id)
+        context = create_measurement_context(
+            dataset_id="agent_sample",
+            selected_strut_id=2,
+        )
+        result = run_measurement_copilot(
+            "Analyze this selected strut.",
+            context["context_id"],
+        )
     finally:
         get_settings.cache_clear()
 
-    assert result["mode"] == "openai-tool-calling"
-    assert result["tool_results"][0]["context_id"] == context_id
-    assert observed_requests[0]["model"] == "gpt-5.6-terra"
-    assert observed_requests[0]["reasoning"] == {"effort": "medium"}
-    assert observed_requests[0]["tools"]
-    outputs = observed_requests[1]["input"]
+    assert [item["tool_name"] for item in result["tool_results"]] == [
+        "inspect_selected_strut"
+    ]
+    tool_result = result["tool_results"][0]
+    assert (
+        f"[inspect_selected_strut:{tool_result['tool_run_id']}]"
+        in result["answer"]
+    )
+    assert "topology only" in result["answer"].lower()
     assert any(
-        isinstance(item, dict)
-        and item.get("type") == "function_call_output"
-        and item.get("call_id") == "call_fixture"
-        for item in outputs
+        "selected-strut evidence" in warning.lower()
+        and "deterministic narration" in warning.lower()
+        for warning in result["warnings"]
     )

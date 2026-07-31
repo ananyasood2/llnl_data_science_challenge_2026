@@ -141,6 +141,25 @@ npm run dev:structure
 Open <http://localhost:3000/measurements>. The built-in registered
 `missing_struts` analysis works without an LLM key. In that mode, the page uses
 the deterministic local orchestrator and still records the same tool lineage.
+Use **Inspect a registered strut** below the thickness histogram to enter an
+exact Strut ID. The result is revision-qualified, marks the strut in the
+histogram and projection maps, and can launch a deterministic Copilot review.
+**View CT evidence** opens the existing Dash viewer, so that action additionally
+requires the optional third terminal described below.
+
+The existing version 7 registered derivative remains qualified for persisted
+thickness and relative-density measurements. The page displays an explicit
+warning that its legacy `broken` classification is not qualified for version 8
+connectivity conclusions. Rebuild the ignored derivative only when the newer
+connectivity taxonomy or validation output is needed:
+
+```powershell
+npm run dev:structure -- --preprocess-only
+```
+
+This reuses compatible mask, skeleton, and distance arrays; it does not leave a
+third server running. The third `npm run dev:structure` terminal is needed only
+when opening the selected-strut raw-CT evidence viewer.
 
 To enable OpenAI Responses API tool selection, add the key only to
 `services/analysis-api/.env`:
@@ -161,7 +180,7 @@ controls triggering and procedure; its optional `agents/openai.yaml` contains
 only user-interface labels and a suggested prompt.
 
 The Part 1 server at `src/mcp_server.py` is the single Codex MCP entry point.
-It preserves the three original tools and also exposes eight dataset-scoped
+It preserves the three original tools and also exposes nine dataset-scoped
 measurement tools:
 
 ```text
@@ -171,6 +190,7 @@ skeletonize
 create_measurement_context
 get_measurement_context
 get_thickness_summary
+inspect_selected_strut
 list_out_of_spec_struts
 get_relative_density
 compare_measurements_to_design
@@ -197,10 +217,11 @@ codex mcp add segmentation-tools -- $pythonPath "$repositoryPath\src\mcp_server.
 ```
 
 Close and restart Codex after changing MCP configuration, skills, or subagents,
-then use `/mcp` to verify the 11 tools. Codex starts this stdio server itself;
+then use `/mcp` to verify the 12 tools. Codex starts this stdio server itself;
 do not keep a fourth terminal open for it. A first request can create its own
 context, for example: “Create a measurement context for `missing_struts`, then
-analyze the thickness distribution and highlight the ten worst struts.”
+inspect Strut ID 42 against the thickness population and its immediate
+registered-topology neighbors.”
 
 The service-specific measurement MCP launcher remains available for internal
 diagnostics and API contract testing, but it is not the Codex registration:

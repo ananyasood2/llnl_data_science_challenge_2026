@@ -4,7 +4,15 @@ import numpy as np
 import pytest
 
 import app.app as dashboard
-from app.app import _axis_indices, _display_axis_ranges, _reorder_xyz, create_app
+from app.app import (
+    _axis_indices,
+    _display_axis_ranges,
+    _evidence_deep_link_selection,
+    _parse_evidence_deep_link,
+    _reorder_xyz,
+    _selection_reference,
+    create_app,
+)
 
 
 def _component_ids(component: object) -> set[str]:
@@ -59,6 +67,144 @@ def test_display_axis_remapping_control_is_not_in_the_dashboard() -> None:
     assert "axis-order" not in identifiers
     assert {"x-axis-max", "y-axis-max", "z-axis-max"} <= identifiers
     assert "model-performance" in identifiers
+
+
+def test_evidence_deep_link_controls_are_wired_into_dashboard() -> None:
+    viewer_app = create_app("unitcell")
+    identifiers = _component_ids(viewer_app.layout)
+    selection_callback = next(
+        callback
+        for output, callback in viewer_app.callback_map.items()
+        if "selected-element.data" in output
+    )
+    scroll_callback = next(
+        callback
+        for callback in viewer_app._callback_list
+        if callback["output"] == "evidence-scroll-state.data"
+    )
+
+    assert {
+        "viewer-location",
+        "evidence-panel",
+        "evidence-scroll-state",
+    } <= identifiers
+    assert {item["id"] for item in selection_callback["inputs"]} >= {
+        "viewer-location",
+        "viewer",
+        "inspect-element",
+    }
+    assert scroll_callback["inputs"] == [
+        {"id": "evidence-details", "property": "children"}
+    ]
+    assert {item["id"] for item in scroll_callback["state"]} == {
+        "selected-element",
+        "viewer-location",
+        "evidence-scroll-state",
+    }
+    assert scroll_callback["clientside_function"] is not None
+    assert "scrollIntoView" in dashboard._EVIDENCE_SCROLL_CLIENTSIDE
+    assert 'selected.source !== "evidence-deep-link"' in (
+        dashboard._EVIDENCE_SCROLL_CLIENTSIDE
+    )
+
+
+def test_only_evidence_deep_links_mark_selection_for_automatic_scroll() -> None:
+    selected = ("strut", {"id": 1284})
+
+    assert _selection_reference(selected) == {"kind": "strut", "id": 1284}
+    assert _selection_reference(selected, evidence_deep_link=True) == {
+        "kind": "strut",
+        "id": 1284,
+        "source": "evidence-deep-link",
+    }
+
+
+def test_evidence_deep_link_parser_preserves_qualified_identifiers() -> None:
+    assert _parse_evidence_deep_link("?threshold=0.42") is None
+    assert _parse_evidence_deep_link(
+        "?datasetId=missing_struts&analysisRevision=revision-123"
+        "&elementKind=strut&elementId=1284"
+    ) == {
+        "datasetId": "missing_struts",
+        "analysisRevision": "revision-123",
+        "elementKind": "strut",
+        "elementId": "1284",
+    }
+
+
+@pytest.mark.parametrize(
+    "search, message",
+    [
+        ("?datasetId=missing_struts", "incomplete"),
+        (
+            "?datasetId=missing_struts&datasetId=unitcell"
+            "&analysisRevision=revision-123&elementKind=strut&elementId=1",
+            "repeated datasetId",
+        ),
+        (
+            "?datasetId=missing_struts&analysisRevision=revision-123"
+            "&elementKind=beam&elementId=1",
+            "element kind",
+        ),
+    ],
+)
+def test_evidence_deep_link_parser_rejects_invalid_requests(
+    search: str,
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        _parse_evidence_deep_link(search)
+
+
+def test_evidence_deep_link_resolves_exact_current_revision_element() -> None:
+    analysis = {
+        "meta": {"cache_fingerprint": "revision-123"},
+        "struts": [{"id": 1284}],
+        "nodes": [{"id": "node-2"}],
+    }
+
+    selected = _evidence_deep_link_selection(
+        "?datasetId=missing_struts&analysisRevision=revision-123"
+        "&elementKind=strut&elementId=1284",
+        "missing_struts",
+        analysis,
+    )
+
+    assert selected == ("strut", analysis["struts"][0])
+
+
+@pytest.mark.parametrize(
+    "search, message",
+    [
+        (
+            "?datasetId=unitcell&analysisRevision=revision-123"
+            "&elementKind=strut&elementId=1284",
+            "does not match this viewer",
+        ),
+        (
+            "?datasetId=missing_struts&analysisRevision=old-revision"
+            "&elementKind=strut&elementId=1284",
+            "does not match the current registered analysis",
+        ),
+        (
+            "?datasetId=missing_struts&analysisRevision=revision-123"
+            "&elementKind=strut&elementId=9999",
+            "No strut with ID 9999",
+        ),
+    ],
+)
+def test_evidence_deep_link_rejects_mismatch_or_unknown_element(
+    search: str,
+    message: str,
+) -> None:
+    analysis = {
+        "meta": {"cache_fingerprint": "revision-123"},
+        "struts": [{"id": 1284}],
+        "nodes": [],
+    }
+
+    with pytest.raises(ValueError, match=message):
+        _evidence_deep_link_selection(search, "missing_struts", analysis)
 
 
 def test_connectivity_failures_share_one_dashboard_filter() -> None:

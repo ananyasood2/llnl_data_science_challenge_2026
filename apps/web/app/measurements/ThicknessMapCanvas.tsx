@@ -25,11 +25,13 @@ export function ThicknessMapCanvas({
   criticalCutoffUm,
   targetUm,
   highlightedIds,
+  selectedId,
 }: {
   elements: ThicknessMapElement[];
   criticalCutoffUm: number;
   targetUm: number;
   highlightedIds: Array<number | string>;
+  selectedId: number | string | null;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -40,6 +42,7 @@ export function ThicknessMapCanvas({
     () => new Set(highlightedIds.map(String)),
     [highlightedIds],
   );
+  const selectedKey = selectedId === null ? null : String(selectedId);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -93,30 +96,40 @@ export function ThicknessMapCanvas({
       size.height / 2 - (point[vertical] - centerVertical) * scale,
     ];
 
-    const regular = elements.filter((item) => !highlightSet.has(String(item.strut_id)));
-    const highlighted = elements.filter((item) => highlightSet.has(String(item.strut_id)));
-    for (const group of [regular, highlighted]) {
+    const regular = elements.filter((item) => {
+      const key = String(item.strut_id);
+      return key !== selectedKey && !highlightSet.has(key);
+    });
+    const highlighted = elements.filter((item) => {
+      const key = String(item.strut_id);
+      return key !== selectedKey && highlightSet.has(key);
+    });
+    const selected = elements.filter((item) => String(item.strut_id) === selectedKey);
+    for (const group of [regular, highlighted, selected]) {
       for (const element of group) {
         const [startX, startY] = project(element.start_xyz);
         const [endX, endY] = project(element.end_xyz);
         const isHighlighted = highlightSet.has(String(element.strut_id));
+        const isSelected = String(element.strut_id) === selectedKey;
         context.beginPath();
         context.moveTo(startX, startY);
         context.lineTo(endX, endY);
-        context.strokeStyle = isHighlighted
+        context.strokeStyle = isSelected
+          ? "#38bdf8"
+          : isHighlighted
           ? "#ffffff"
           : thicknessColor(
               element.measured_thickness_um,
               criticalCutoffUm,
               targetUm,
             );
-        context.globalAlpha = isHighlighted ? 1 : 0.68;
-        context.lineWidth = isHighlighted ? 3 : 0.8;
+        context.globalAlpha = isSelected || isHighlighted ? 1 : 0.68;
+        context.lineWidth = isSelected ? 5 : isHighlighted ? 3 : 0.8;
         context.stroke();
       }
     }
     context.globalAlpha = 1;
-  }, [criticalCutoffUm, elements, highlightSet, projection, size, targetUm, zoom]);
+  }, [criticalCutoffUm, elements, highlightSet, projection, selectedKey, size, targetUm, zoom]);
 
   return (
     <div className="thickness-map-shell" ref={containerRef}>
@@ -154,6 +167,7 @@ export function ThicknessMapCanvas({
         <span><i className="thickness-high" />Above 130% target</span>
         <span><i className="thickness-unmeasured" />Unmeasured</span>
         {highlightedIds.length ? <span><i className="thickness-highlight" />Agent-selected</span> : null}
+        {selectedId !== null ? <span><i className="thickness-selected" />Selected strut</span> : null}
       </div>
     </div>
   );

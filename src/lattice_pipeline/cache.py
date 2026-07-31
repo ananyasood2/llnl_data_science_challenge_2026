@@ -27,6 +27,32 @@ from .validation import (
 )
 
 ANALYSIS_VERSION = 8
+ARRAY_CACHE_VERSION = 4
+
+
+def _semantic_analysis_fingerprint(
+    array_cache_fingerprint: str,
+    *,
+    analysis_version: int,
+    voxel_size_mm: float,
+) -> str:
+    """Qualify an analysis revision without invalidating reusable volume arrays.
+
+    Mask, skeleton, and distance arrays depend on the source/threshold cache
+    signature.  Defect and measurement semantics can change independently, so
+    their public revision also includes the analysis version and physical
+    spacing while retaining the existing arrays.
+    """
+
+    payload = {
+        "revision_scheme": "lattice-analysis-v1",
+        "array_cache_fingerprint": str(array_cache_fingerprint),
+        "analysis_version": int(analysis_version),
+        "voxel_size_mm": float(voxel_size_mm),
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
 
 
 def _source_signature(path: Path) -> dict[str, Any]:
@@ -137,11 +163,16 @@ def ensure_analysis(
         "design": _source_signature(design_path),
         "threshold_request": threshold,
         "analysis_stride": stride,
-        "pipeline_version": 4,
+        "pipeline_version": ARRAY_CACHE_VERSION,
     }
     fingerprint = hashlib.sha256(
         json.dumps(signature, sort_keys=True).encode("utf-8")
     ).hexdigest()
+    analysis_fingerprint = _semantic_analysis_fingerprint(
+        fingerprint,
+        analysis_version=ANALYSIS_VERSION,
+        voxel_size_mm=voxel_size,
+    )
     cached_meta = {}
     if cache_meta_path.is_file():
         try:
@@ -204,6 +235,8 @@ def ensure_analysis(
             if (
                 cached_analysis["meta"].get("analysis_version") == ANALYSIS_VERSION
                 and abs(float(cached_analysis["meta"]["voxel_size_mm"]) - voxel_size) < 1e-12
+                and cached_analysis["meta"].get("cache_fingerprint")
+                == analysis_fingerprint
             ):
                 cached_analysis["_cache"] = {
                     "hit": True,
@@ -380,7 +413,7 @@ def ensure_analysis(
             "physical_dimensions_mm": (dimensions_vox * voxel_size).round(4).tolist(),
             "foreground_voxels": foreground_voxels,
             "foreground_volume_mm3": float(foreground_voxels * voxel_size**3),
-            "cache_fingerprint": fingerprint,
+            "cache_fingerprint": analysis_fingerprint,
         },
         "nodes": defect_result["nodes"],
         "struts": defect_result["struts"],

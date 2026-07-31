@@ -28,6 +28,7 @@ from app.measurement_copilot.tools import (
     get_measurement_context as _get_measurement_context,
     get_relative_density as _get_relative_density,
     get_thickness_summary as _get_thickness_summary,
+    inspect_selected_strut as _inspect_selected_strut,
     list_out_of_spec_struts as _list_out_of_spec_struts,
 )
 
@@ -177,6 +178,13 @@ def get_thickness_summary(context_id: str) -> dict:
     """Return deterministic thickness statistics, histogram, and exclusions."""
 
     return _get_thickness_summary(context_id)
+
+
+@mcp.tool()
+def inspect_selected_strut(context_id: str) -> dict:
+    """Inspect the context-selected strut against its population and neighbors."""
+
+    return _inspect_selected_strut(context_id)
 
 
 @mcp.tool()

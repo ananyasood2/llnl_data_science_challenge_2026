@@ -4,6 +4,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type CSSProperties,
   type FormEvent,
@@ -17,6 +18,13 @@ import {
   statusLabel,
   type MeasurementStatus,
 } from "./measurementFormatting";
+import {
+  analysisRevisionsMatch,
+  buildStrutEvidenceHref,
+  getSelectedHistogramMarker,
+  normalizeStrutId,
+  SELECTED_STRUT_COPILOT_QUESTION,
+} from "./selectedStrutHelpers";
 import {
   ThicknessMapCanvas,
   type ThicknessMapElement,
@@ -104,6 +112,65 @@ type OutlierPayload = {
   }>;
 };
 
+type SelectedStrutPayload = {
+  dataset_id: string;
+  analysis_revision: string;
+  unit: "um";
+  method: "skeleton_edt_median_diameter";
+  method_version: "1";
+  eligibility_rule: "finite positive measured_thickness_um";
+  eligible_strut_count: number;
+  excluded_strut_count: number;
+  strut: {
+    strut_id: number | string;
+    analysis_status: string | null;
+    measurement_eligible: boolean;
+    measured_thickness_um: number | null;
+    design_thickness_um: number | null;
+    thickness_ratio: number | null;
+    endpoint_node_ids: Array<number | string>;
+    percentile: {
+      rank_percent: number | null;
+      count_at_or_below: number | null;
+      population_count: number;
+      method: "weak_ecdf_lte";
+    };
+    target_comparison: {
+      target_um: number;
+      difference_um: number | null;
+      below: boolean | null;
+    };
+    critical_cutoff_comparison: {
+      cutoff_um: number;
+      difference_um: number | null;
+      below: boolean | null;
+    };
+    user_cutoff_comparison: {
+      cutoff_um: number;
+      difference_um: number | null;
+      below: boolean | null;
+    };
+  };
+  neighbors: {
+    definition: "other_registered_struts_sharing_an_endpoint_node";
+    total_count: number;
+    eligible_count: number;
+    excluded_count: number;
+    median_thickness_um: number | null;
+    selected_minus_median_um: number | null;
+    returned_count: number;
+    truncated: boolean;
+    struts: Array<{
+      strut_id: number | string;
+      measured_thickness_um: number | null;
+      analysis_status: string | null;
+      shared_node_ids: Array<number | string>;
+    }>;
+  };
+  warnings: string[];
+  provenance: Record<string, unknown>;
+};
+
 type CopilotToolResult = {
   tool_run_id: string;
   tool_name: string;
@@ -117,6 +184,11 @@ type CopilotToolResult = {
     kind?: string;
   }>;
   warnings: string[];
+};
+
+type MeasurementContextCreateResponse = {
+  context_id: string;
+  analysis_revision: string;
 };
 
 type CopilotResponse = {
@@ -156,7 +228,13 @@ function StatusBadge({ status }: { status: MeasurementStatus }) {
   return <span className={`measurement-status status-${status}`}>{statusLabel(status)}</span>;
 }
 
-function ThicknessHistogram({ data }: { data: MeasurementPayload["thickness"] }) {
+function ThicknessHistogram({
+  data,
+  selectedStrut,
+}: {
+  data: MeasurementPayload["thickness"];
+  selectedStrut: SelectedStrutPayload | null;
+}) {
   const width = 820;
   const height = 275;
   const margin = { left: 48, right: 20, top: 20, bottom: 42 };
@@ -172,6 +250,12 @@ function ThicknessHistogram({ data }: { data: MeasurementPayload["thickness"] })
       ? [{ value: data.user_cutoff_um, label: `${data.user_cutoff_um} cutoff`, className: "user" }]
       : []),
   ];
+  const selectedMarker = selectedStrut
+    ? getSelectedHistogramMarker(
+        selectedStrut.strut.measured_thickness_um,
+        rangeMax,
+      )
+    : null;
 
   return (
     <div className="measurement-chart-wrap">
@@ -209,6 +293,24 @@ function ThicknessHistogram({ data }: { data: MeasurementPayload["thickness"] })
             </g>
           );
         })}
+        {selectedMarker && selectedMarker.kind !== "unmeasured" ? (() => {
+          const x = margin.left + selectedMarker.position * innerWidth;
+          const isOverflow = selectedMarker.kind === "overflow";
+          return (
+            <g className={`histogram-marker marker-selected${isOverflow ? " marker-selected-overflow" : ""}`}>
+              <line x1={x} x2={x} y1={margin.top - 8} y2={margin.top + innerHeight} />
+              <circle cx={x} cy={margin.top + innerHeight - 5} r="5" />
+              <text
+                textAnchor={isOverflow ? "end" : "start"}
+                x={x + (isOverflow ? -6 : 6)}
+                y={margin.top + innerHeight - 12}
+              >
+                Selected #{selectedStrut?.strut.strut_id}
+              </text>
+              <title>{`Selected strut #${selectedStrut?.strut.strut_id}: ${formatMicrons(selectedMarker.valueUm)}`}</title>
+            </g>
+          );
+        })() : null}
         <text className="chart-label" x={margin.left} y={height - 10}>0 µm</text>
         <text className="chart-label" textAnchor="end" x={width - margin.right} y={height - 10}>{rangeMax.toFixed(0)} µm</text>
         <text className="chart-label" textAnchor="middle" transform={`rotate(-90 14 ${height / 2})`} x={14} y={height / 2}>Strut count</text>
@@ -216,6 +318,16 @@ function ThicknessHistogram({ data }: { data: MeasurementPayload["thickness"] })
       {data.histogram.overflow_count > 0 ? (
         <p className="histogram-overflow-note">
           {data.histogram.overflow_count.toLocaleString()} high-thickness values exceed the displayed range; they remain included in summary statistics.
+        </p>
+      ) : null}
+      {selectedStrut && selectedMarker?.kind === "unmeasured" ? (
+        <p className="histogram-selection-note">
+          Selected strut #{selectedStrut.strut.strut_id} is unmeasured, so it has no histogram position; it is not treated as zero.
+        </p>
+      ) : null}
+      {selectedStrut && selectedMarker?.kind === "overflow" ? (
+        <p className="histogram-selection-note">
+          Selected strut #{selectedStrut.strut.strut_id} measures {formatMicrons(selectedMarker.valueUm)} and exceeds the displayed range; its marker is pinned to the right edge.
         </p>
       ) : null}
     </div>
@@ -230,6 +342,20 @@ function MetricCard({ label, value, note }: { label: string; value: string; note
       {note ? <small>{note}</small> : null}
     </article>
   );
+}
+
+function formatOptionalMicrons(value: number | null) {
+  return value === null ? "Not available" : formatMicrons(value);
+}
+
+function formatSignedMicrons(value: number | null) {
+  if (value === null) return "Not available";
+  return `${value > 0 ? "+" : ""}${formatMicrons(value)}`;
+}
+
+function cutoffComparison(value: boolean | null) {
+  if (value === null) return "Not available";
+  return value ? "Below" : "At or above";
 }
 
 export function MeasurementClient({
@@ -251,6 +377,16 @@ export function MeasurementClient({
   const [copilotError, setCopilotError] = useState<string | null>(null);
   const [chatEntries, setChatEntries] = useState<ChatEntry[]>([]);
   const [conversationId, setConversationId] = useState<string | null>(null);
+  const [strutIdInput, setStrutIdInput] = useState("");
+  const [selectedStrutId, setSelectedStrutId] = useState<string | null>(null);
+  const [selectedStrut, setSelectedStrut] = useState<SelectedStrutPayload | null>(null);
+  const [selectedStrutState, setSelectedStrutState] = useState<
+    "idle" | "loading" | "ready" | "error"
+  >("idle");
+  const [selectedStrutError, setSelectedStrutError] = useState<string | null>(null);
+  const [selectedStrutRefreshKey, setSelectedStrutRefreshKey] = useState(0);
+  const copilotRef = useRef<HTMLElement>(null);
+  const qualifiedRevision = payload?.analysis_revision ?? null;
 
   const load = useCallback(async (cutoff: number) => {
     const query = new URLSearchParams({
@@ -292,26 +428,108 @@ export function MeasurementClient({
     void load(activeCutoff);
   }, [activeCutoff, load]);
 
+  useEffect(() => {
+    if (!selectedStrutId || !qualifiedRevision) return;
+    const controller = new AbortController();
+    const loadSelectedStrut = async () => {
+      // Defer local state updates so this effect only schedules the external sync.
+      await Promise.resolve();
+      if (controller.signal.aborted) return;
+      setSelectedStrutState("loading");
+      setSelectedStrutError(null);
+      setSelectedStrut(null);
+      const query = new URLSearchParams({
+        target_thickness_um: "350",
+        critical_cutoff_um: "300",
+        user_cutoff_um: String(activeCutoff),
+        expected_analysis_revision: qualifiedRevision,
+      });
+      const base = `${analysisApiUrl()}/v1/datasets/${encodeURIComponent(initialDatasetId)}/measurements`;
+      try {
+        const response = await fetch(
+          `${base}/struts/${encodeURIComponent(selectedStrutId)}?${query}`,
+          { cache: "no-store", signal: controller.signal },
+        );
+        const result = await responseJson<SelectedStrutPayload>(response);
+        if (controller.signal.aborted) return;
+        if (
+          result.dataset_id !== initialDatasetId ||
+          result.analysis_revision !== qualifiedRevision
+        ) {
+          throw new Error(
+            "Selected-strut evidence did not match the current dataset revision.",
+          );
+        }
+        setSelectedStrut(result);
+        setSelectedStrutState("ready");
+      } catch (caught) {
+        if (controller.signal.aborted) return;
+        const message = caught instanceof Error
+          ? caught.message
+          : "Selected-strut evidence could not be loaded.";
+        setSelectedStrutError(
+          message === "Failed to fetch"
+            ? "Analysis API unavailable. Start it with npm run dev:api, then retry this strut."
+            : message,
+        );
+        setSelectedStrutState("error");
+      }
+    };
+    void loadSelectedStrut();
+    return () => controller.abort();
+  }, [
+    activeCutoff,
+    initialDatasetId,
+    qualifiedRevision,
+    selectedStrutId,
+    selectedStrutRefreshKey,
+  ]);
+
   const submitCutoff = (event: FormEvent) => {
     event.preventDefault();
     const nextCutoff = clampCutoff(Number(cutoffInput));
     setCutoffInput(String(nextCutoff));
     setState("loading");
     setError(null);
+    if (selectedStrutId && nextCutoff !== activeCutoff) {
+      setSelectedStrut(null);
+      setSelectedStrutError(null);
+      setSelectedStrutState("loading");
+    }
     setActiveCutoff(nextCutoff);
     if (nextCutoff === activeCutoff) void load(nextCutoff);
   };
 
-  const askCopilot = async (question: string) => {
+  const submitStrutLookup = (event: FormEvent) => {
+    event.preventDefault();
+    const normalizedId = normalizeStrutId(strutIdInput);
+    if (!normalizedId) {
+      setSelectedStrutId(null);
+      setSelectedStrut(null);
+      setSelectedStrutError(
+        "Enter a strut ID using letters, numbers, periods, underscores, colons, or hyphens.",
+      );
+      setSelectedStrutState("error");
+      return;
+    }
+    setStrutIdInput(normalizedId);
+    setSelectedStrut(null);
+    setSelectedStrutError(null);
+    setSelectedStrutState("loading");
+    setSelectedStrutId(normalizedId);
+    setSelectedStrutRefreshKey((value) => value + 1);
+  };
+
+  const askCopilot = async (
+    question: string,
+    contextStrutId: number | string | null = null,
+    expectedAnalysisRevision: string | null = null,
+  ) => {
     if (!payload || !question.trim() || copilotState === "running") return;
     const cleanQuestion = question.trim();
+    const requiredRevision = expectedAnalysisRevision ?? payload.analysis_revision;
     setCopilotState("running");
     setCopilotError(null);
-    setChatEntries((entries) => [
-      ...entries,
-      { id: `user-${Date.now()}`, role: "user", text: cleanQuestion },
-    ]);
-    setCopilotInput("");
     try {
       const contextResponse = await fetch(`${analysisApiUrl()}/v1/measurement-copilot/contexts`, {
         method: "POST",
@@ -320,12 +538,29 @@ export function MeasurementClient({
           dataset_id: payload.dataset_id,
           target_thickness_um: payload.thickness.target_um,
           critical_cutoff_um: payload.thickness.critical_cutoff_um,
-          user_cutoff_um: payload.thickness.user_cutoff_um,
+          user_cutoff_um: activeCutoff,
           target_density_percent: payload.relative_density.target_percent,
+          selected_strut_id: contextStrutId,
           visible_statuses: [],
         }),
       });
-      const context = await responseJson<{ context_id: string }>(contextResponse);
+      const context = await responseJson<MeasurementContextCreateResponse>(contextResponse);
+      if (!analysisRevisionsMatch(requiredRevision, context.analysis_revision)) {
+        const staleMessage = contextStrutId === null
+          ? "The measurement view is stale because Copilot opened a different analysis revision. Reload the measurements, then retry."
+          : "The selected-strut evidence is stale because Copilot opened a different analysis revision. Click Retry in the strut inspector to refresh its evidence, then ask Copilot again.";
+        if (contextStrutId !== null) {
+          setSelectedStrut(null);
+          setSelectedStrutError(staleMessage);
+          setSelectedStrutState("error");
+        }
+        throw new Error(staleMessage);
+      }
+      setChatEntries((entries) => [
+        ...entries,
+        { id: `user-${Date.now()}`, role: "user", text: cleanQuestion },
+      ]);
+      setCopilotInput("");
       let activeConversation = conversationId;
       if (!activeConversation) {
         activeConversation = `mconv_${crypto.randomUUID().replaceAll("-", "")}`;
@@ -364,6 +599,16 @@ export function MeasurementClient({
       );
       setCopilotState("error");
     }
+  };
+
+  const askCopilotAboutSelectedStrut = () => {
+    if (!selectedStrut) return;
+    copilotRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    void askCopilot(
+      SELECTED_STRUT_COPILOT_QUESTION,
+      selectedStrut.strut.strut_id,
+      selectedStrut.analysis_revision,
+    );
   };
 
   const submitCopilot = (event: FormEvent) => {
@@ -431,7 +676,156 @@ export function MeasurementClient({
               <label><span>User-defined cutoff</span><span className="input-with-unit"><input min="1" max="2000" onChange={(event) => setCutoffInput(event.target.value)} step="1" type="number" value={cutoffInput} /><span>µm</span></span></label>
               <button type="submit">Apply cutoff</button>
             </form>
-            <ThicknessHistogram data={payload.thickness} />
+            <section className="measurement-strut-inspector" aria-labelledby="strut-inspector-heading">
+              <div className="measurement-strut-inspector-header">
+                <div>
+                  <p className="panel-kicker">Element evidence</p>
+                  <h3 id="strut-inspector-heading">Inspect a registered strut</h3>
+                  <p>Look up one registered strut without changing the population summary.</p>
+                </div>
+                <form className="measurement-strut-search" onSubmit={submitStrutLookup}>
+                  <label htmlFor="measurement-strut-id">Strut ID</label>
+                  <div>
+                    <input
+                      autoComplete="off"
+                      id="measurement-strut-id"
+                      maxLength={128}
+                      onChange={(event) => setStrutIdInput(event.target.value)}
+                      placeholder="e.g. 42"
+                      value={strutIdInput}
+                    />
+                    <button disabled={selectedStrutState === "loading"} type="submit">
+                      Analyze
+                    </button>
+                  </div>
+                </form>
+              </div>
+
+              <div className="measurement-strut-result" aria-live="polite">
+                {selectedStrutState === "idle" ? (
+                  <p className="measurement-strut-idle">
+                    Enter a Strut ID to load revision-bound thickness and one-hop topology evidence.
+                  </p>
+                ) : null}
+                {selectedStrutState === "loading" ? (
+                  <div className="measurement-strut-loading" role="status">
+                    <span className="measurement-spinner" aria-hidden="true" />
+                    <span>Loading selected-strut evidence for revision {revision}…</span>
+                  </div>
+                ) : null}
+                {selectedStrutState === "error" ? (
+                  <div className="measurement-strut-error" role="alert">
+                    <div>
+                      <strong>Strut evidence unavailable</strong>
+                      <p>{selectedStrutError}</p>
+                    </div>
+                    {selectedStrutId ? (
+                      <button
+                        className="measurement-secondary-button"
+                        onClick={() => {
+                          setSelectedStrutError(null);
+                          setSelectedStrutState("loading");
+                          setSelectedStrutRefreshKey((value) => value + 1);
+                        }}
+                        type="button"
+                      >
+                        Retry
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
+                {selectedStrutState === "ready" && selectedStrut ? (
+                  <article className="measurement-strut-detail">
+                    <div className="measurement-strut-detail-header">
+                      <div>
+                        <span>Selected element</span>
+                        <h4>Strut #{selectedStrut.strut.strut_id}</h4>
+                      </div>
+                      <span className={`state ${selectedStrut.strut.measurement_eligible ? "state-ready" : "state-warning"}`}>
+                        {(selectedStrut.strut.analysis_status ?? "unmeasured").replaceAll("_", " ")}
+                      </span>
+                    </div>
+                    <div className="measurement-strut-detail-grid">
+                      <MetricCard
+                        label="Measured thickness"
+                        value={formatOptionalMicrons(selectedStrut.strut.measured_thickness_um)}
+                        note={selectedStrut.strut.measurement_eligible ? selectedStrut.method.replaceAll("_", " ") : "Excluded as unmeasured; not treated as zero"}
+                      />
+                      <MetricCard
+                        label="Design thickness"
+                        value={formatOptionalMicrons(selectedStrut.strut.design_thickness_um)}
+                      />
+                      <MetricCard
+                        label={`From ${selectedStrut.strut.target_comparison.target_um} µm target`}
+                        value={formatSignedMicrons(selectedStrut.strut.target_comparison.difference_um)}
+                        note={cutoffComparison(selectedStrut.strut.target_comparison.below)}
+                      />
+                      <MetricCard
+                        label={`From ${selectedStrut.strut.critical_cutoff_comparison.cutoff_um} µm critical`}
+                        value={formatSignedMicrons(selectedStrut.strut.critical_cutoff_comparison.difference_um)}
+                        note={cutoffComparison(selectedStrut.strut.critical_cutoff_comparison.below)}
+                      />
+                      <MetricCard
+                        label={`From ${selectedStrut.strut.user_cutoff_comparison.cutoff_um} µm cutoff`}
+                        value={formatSignedMicrons(selectedStrut.strut.user_cutoff_comparison.difference_um)}
+                        note={cutoffComparison(selectedStrut.strut.user_cutoff_comparison.below)}
+                      />
+                      <MetricCard
+                        label="Population percentile"
+                        value={selectedStrut.strut.percentile.rank_percent === null ? "Not available" : formatPercent(selectedStrut.strut.percentile.rank_percent)}
+                        note={selectedStrut.strut.percentile.count_at_or_below === null
+                          ? `Lower means thinner; ${selectedStrut.strut.percentile.population_count.toLocaleString()} eligible struts`
+                          : `Lower means thinner; ${selectedStrut.strut.percentile.count_at_or_below.toLocaleString()} of ${selectedStrut.strut.percentile.population_count.toLocaleString()} at or below (weak ECDF)`}
+                      />
+                      <MetricCard
+                        label="One-hop neighbors"
+                        value={`${selectedStrut.neighbors.eligible_count.toLocaleString()} / ${selectedStrut.neighbors.total_count.toLocaleString()} measured`}
+                        note={`${selectedStrut.neighbors.excluded_count.toLocaleString()} excluded`}
+                      />
+                      <MetricCard
+                        label="Neighbor median"
+                        value={formatOptionalMicrons(selectedStrut.neighbors.median_thickness_um)}
+                        note={`Selected difference ${formatSignedMicrons(selectedStrut.neighbors.selected_minus_median_um)}`}
+                      />
+                    </div>
+                    <p className="measurement-strut-lineage">
+                      Analysis revision <code>{selectedStrut.analysis_revision}</code>
+                      <span aria-hidden="true"> · </span>
+                      Measurement method {selectedStrut.method.replaceAll("_", " ")}
+                    </p>
+                    <p className="measurement-strut-topology-note">
+                      Immediate topology neighbors share an endpoint node with the selected strut. This one-hop comparison does not establish spatial isolation or clustering.
+                    </p>
+                    {selectedStrut.warnings.length ? (
+                      <ul className="measurement-strut-warnings">
+                        {selectedStrut.warnings.map((warning) => <li key={warning}>{warning}</li>)}
+                      </ul>
+                    ) : null}
+                    <div className="measurement-strut-actions">
+                      <a
+                        href={buildStrutEvidenceHref(
+                          selectedStrut.dataset_id,
+                          selectedStrut.analysis_revision,
+                          selectedStrut.strut.strut_id,
+                        )}
+                        rel="noopener noreferrer"
+                        target="_blank"
+                      >
+                        View CT evidence
+                      </a>
+                      <button
+                        disabled={copilotState === "running"}
+                        onClick={askCopilotAboutSelectedStrut}
+                        type="button"
+                      >
+                        Ask Copilot about this strut
+                      </button>
+                    </div>
+                  </article>
+                ) : null}
+              </div>
+            </section>
+            <ThicknessHistogram data={payload.thickness} selectedStrut={selectedStrut} />
             <div className="measurement-metric-grid">
               <MetricCard label="Mean" value={formatMicrons(payload.thickness.mean_um)} />
               <MetricCard label="Median" value={formatMicrons(payload.thickness.median_um)} />
@@ -449,9 +843,9 @@ export function MeasurementClient({
               <div><p className="panel-kicker">Registered geometry</p><h2 id="map-heading">Thickness map</h2></div>
               <span className="state state-ready">{payload.thickness_map?.element_count.toLocaleString()} struts</span>
             </div>
-            <p className="measurement-section-copy">Use the XY, XZ, and YZ projections to reduce 3D occlusion. Agent-selected outliers appear in white.</p>
+            <p className="measurement-section-copy">Use the XY, XZ, and YZ projections to reduce 3D occlusion. The selected strut appears in cyan; agent-selected outliers remain white.</p>
             {payload.thickness_map ? (
-              <ThicknessMapCanvas criticalCutoffUm={payload.thickness.critical_cutoff_um} elements={payload.thickness_map.elements} highlightedIds={highlightedIds} targetUm={payload.thickness.target_um} />
+              <ThicknessMapCanvas criticalCutoffUm={payload.thickness.critical_cutoff_um} elements={payload.thickness_map.elements} highlightedIds={highlightedIds} selectedId={selectedStrutState === "ready" && selectedStrut ? selectedStrut.strut.strut_id : null} targetUm={payload.thickness.target_um} />
             ) : null}
           </section>
 
@@ -504,7 +898,7 @@ export function MeasurementClient({
             </dl>
           </section>
 
-          <section className="dataset-panel measurement-section measurement-copilot" aria-labelledby="copilot-heading">
+          <section className="dataset-panel measurement-section measurement-copilot" aria-labelledby="copilot-heading" ref={copilotRef}>
             <div className="measurement-section-header">
               <div><p className="panel-kicker">Agentic analysis</p><h2 id="copilot-heading">Measurement Copilot</h2></div>
               <span className="state state-ready">Tool evidence required</span>

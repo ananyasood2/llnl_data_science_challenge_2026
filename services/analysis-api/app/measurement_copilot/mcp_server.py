@@ -12,6 +12,7 @@ from .tools import (
     get_measurement_context as _get_measurement_context,
     get_relative_density as _get_relative_density,
     get_thickness_summary as _get_thickness_summary,
+    inspect_selected_strut as _inspect_selected_strut,
     list_out_of_spec_struts as _list_out_of_spec_struts,
 )
 
@@ -65,6 +66,13 @@ def list_out_of_spec_struts(
     """Return a bounded, thinnest-first list of registered struts below a cutoff."""
 
     return _list_out_of_spec_struts(context_id, cutoff_um, limit)
+
+
+@mcp.tool()
+def inspect_selected_strut(context_id: str) -> dict:
+    """Inspect the context-selected strut, its weak-ECDF rank, and endpoint neighbors."""
+
+    return _inspect_selected_strut(context_id)
 
 
 @mcp.tool()

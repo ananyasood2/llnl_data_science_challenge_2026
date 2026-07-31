@@ -14,6 +14,7 @@ import numpy as np
 
 MEASUREMENT_METHOD_VERSION = "1"
 DEFAULT_POLICY_VERSION = "demo-policy-v1"
+DEFAULT_NEIGHBOR_LIMIT = 25
 
 
 def _positive_number(value: float, name: str) -> float:
@@ -32,6 +33,229 @@ def _valid_thickness(record: Mapping[str, Any]) -> float | None:
     except (TypeError, ValueError):
         return None
     return number if np.isfinite(number) and number > 0 else None
+
+
+def _valid_optional_number(record: Mapping[str, Any], key: str) -> float | None:
+    """Return a finite persisted scalar without inventing a missing value."""
+
+    value = record.get(key)
+    if value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if np.isfinite(number) else None
+
+
+def _endpoint_node_ids(record: Mapping[str, Any]) -> list[Any]:
+    """Return persisted endpoint node IDs, accepting both supported graph names."""
+
+    for first_key, second_key in (("node_a", "node_b"), ("junction0", "junction1")):
+        first = record.get(first_key)
+        second = record.get(second_key)
+        if first is not None and second is not None:
+            return [first] if first == second else [first, second]
+    return []
+
+
+def _identifier_matches(persisted: Any, requested: Any) -> bool:
+    """Match URL/context identifiers while retaining the persisted identifier type."""
+
+    if persisted == requested and type(persisted) is type(requested):
+        return True
+    return isinstance(persisted, (int, str)) and isinstance(
+        requested, (int, str)
+    ) and str(persisted) == str(requested)
+
+
+def inspect_strut_measurement(
+    struts: Iterable[Mapping[str, Any]],
+    strut_id: int | str,
+    *,
+    target_um: float = 350.0,
+    critical_cutoff_um: float = 300.0,
+    user_cutoff_um: float = 350.0,
+    neighbor_limit: int = DEFAULT_NEIGHBOR_LIMIT,
+) -> dict[str, Any]:
+    """Inspect one persisted strut against the distribution and graph topology.
+
+    Percentile rank is the weak empirical CDF (``<=``) over all eligible
+    persisted strut measurements. Neighbors are other registered struts that
+    share an endpoint node ID; geometric proximity is intentionally not
+    inferred from polylines.
+    """
+
+    target = _positive_number(target_um, "target_um")
+    critical = _positive_number(critical_cutoff_um, "critical_cutoff_um")
+    user_cutoff = _positive_number(user_cutoff_um, "user_cutoff_um")
+    if neighbor_limit < 1 or neighbor_limit > 50:
+        raise ValueError("neighbor_limit must be between 1 and 50")
+
+    records = list(struts)
+    exact_matching_indexes = [
+        index
+        for index, record in enumerate(records)
+        if type(record.get("id")) is type(strut_id)
+        and record.get("id") == strut_id
+    ]
+    matching_indexes = exact_matching_indexes or [
+        index
+        for index, record in enumerate(records)
+        if _identifier_matches(record.get("id"), strut_id)
+    ]
+    if not matching_indexes:
+        raise KeyError(f"Strut {strut_id!r} was not found in the registered analysis.")
+    if len(matching_indexes) > 1:
+        raise ValueError(
+            f"Strut identifier {strut_id!r} is ambiguous in the registered analysis."
+        )
+
+    selected_index = matching_indexes[0]
+    selected = records[selected_index]
+    persisted_id = selected.get("id")
+    measured = _valid_thickness(selected)
+    design_value = _valid_optional_number(selected, "design_thickness_um")
+    design = design_value if design_value is not None and design_value > 0 else None
+    ratio_value = _valid_optional_number(selected, "thickness_ratio")
+    ratio = ratio_value if ratio_value is not None and ratio_value > 0 else None
+    endpoint_ids = _endpoint_node_ids(selected)
+
+    eligible_values = [
+        value
+        for record in records
+        if (value := _valid_thickness(record)) is not None
+    ]
+    eligible_count = len(eligible_values)
+    excluded_count = len(records) - eligible_count
+
+    def comparison(value: float, label: str) -> dict[str, Any]:
+        return {
+            label: round(value, 3),
+            "difference_um": (
+                round(measured - value, 3) if measured is not None else None
+            ),
+            # Boundary equality is not below a cutoff.
+            "below": measured < value if measured is not None else None,
+        }
+
+    if measured is None:
+        percentile = {
+            "rank_percent": None,
+            "count_at_or_below": None,
+            "population_count": eligible_count,
+            "method": "weak_ecdf_lte",
+        }
+    else:
+        count_at_or_below = sum(value <= measured for value in eligible_values)
+        percentile = {
+            "rank_percent": round(100.0 * count_at_or_below / eligible_count, 3),
+            "count_at_or_below": count_at_or_below,
+            "population_count": eligible_count,
+            "method": "weak_ecdf_lte",
+        }
+
+    endpoint_set = set(endpoint_ids)
+    compact_neighbors: list[dict[str, Any]] = []
+    eligible_neighbor_values: list[float] = []
+    if endpoint_set:
+        for index, record in enumerate(records):
+            if index == selected_index:
+                continue
+            neighbor_endpoints = _endpoint_node_ids(record)
+            shared_node_ids = [
+                node_id for node_id in endpoint_ids if node_id in set(neighbor_endpoints)
+            ]
+            if not shared_node_ids:
+                continue
+            neighbor_thickness = _valid_thickness(record)
+            if neighbor_thickness is not None:
+                eligible_neighbor_values.append(neighbor_thickness)
+            compact_neighbors.append(
+                {
+                    "strut_id": record.get("id"),
+                    "analysis_status": record.get("status"),
+                    "measured_thickness_um": (
+                        round(neighbor_thickness, 3)
+                        if neighbor_thickness is not None
+                        else None
+                    ),
+                    "shared_node_ids": shared_node_ids,
+                }
+            )
+
+    neighbor_median_value = (
+        float(np.median(eligible_neighbor_values))
+        if eligible_neighbor_values
+        else None
+    )
+    neighbor_median = (
+        round(neighbor_median_value, 3)
+        if neighbor_median_value is not None
+        else None
+    )
+    selected_minus_median = (
+        round(measured - neighbor_median_value, 3)
+        if measured is not None and neighbor_median_value is not None
+        else None
+    )
+    total_neighbor_count = len(compact_neighbors)
+
+    warnings = [
+        "Neighbor comparison uses registered shared endpoint nodes only; it does not establish geometric proximity, causality, or statistical independence."
+    ]
+    if measured is None:
+        warnings.append(
+            "The selected strut has no finite positive measured thickness; percentile and cutoff comparisons are unavailable."
+        )
+    if design is None:
+        warnings.append(
+            "The selected strut has no finite persisted design thickness; no design-thickness value is reported."
+        )
+    if not endpoint_ids:
+        warnings.append(
+            "The selected strut has no qualified endpoint node IDs; one-hop neighbors cannot be determined."
+        )
+    elif neighbor_median is None:
+        warnings.append(
+            "No one-hop neighbor has an eligible measured thickness; the neighbor median comparison is unavailable."
+        )
+
+    return {
+        "unit": "um",
+        "method": "skeleton_edt_median_diameter",
+        "method_version": MEASUREMENT_METHOD_VERSION,
+        "eligibility_rule": "finite positive measured_thickness_um",
+        "eligible_strut_count": eligible_count,
+        "excluded_strut_count": excluded_count,
+        "strut": {
+            "strut_id": persisted_id,
+            "analysis_status": selected.get("status"),
+            "measurement_eligible": measured is not None,
+            "measured_thickness_um": (
+                round(measured, 3) if measured is not None else None
+            ),
+            "design_thickness_um": round(design, 3) if design is not None else None,
+            "thickness_ratio": round(ratio, 4) if ratio is not None else None,
+            "endpoint_node_ids": endpoint_ids,
+            "percentile": percentile,
+            "target_comparison": comparison(target, "target_um"),
+            "critical_cutoff_comparison": comparison(critical, "cutoff_um"),
+            "user_cutoff_comparison": comparison(user_cutoff, "cutoff_um"),
+        },
+        "neighbors": {
+            "definition": "other_registered_struts_sharing_an_endpoint_node",
+            "total_count": total_neighbor_count,
+            "eligible_count": len(eligible_neighbor_values),
+            "excluded_count": total_neighbor_count - len(eligible_neighbor_values),
+            "median_thickness_um": neighbor_median,
+            "selected_minus_median_um": selected_minus_median,
+            "returned_count": min(total_neighbor_count, neighbor_limit),
+            "truncated": total_neighbor_count > neighbor_limit,
+            "struts": compact_neighbors[:neighbor_limit],
+        },
+        "warnings": warnings,
+    }
 
 
 def compute_thickness_histogram(
@@ -388,6 +612,7 @@ def compute_cutoff_sensitivity(
 __all__ = [
     "MEASUREMENT_METHOD_VERSION",
     "DEFAULT_POLICY_VERSION",
+    "DEFAULT_NEIGHBOR_LIMIT",
     "build_thickness_map",
     "compare_measurements_to_policy",
     "compute_cutoff_sensitivity",
@@ -395,5 +620,6 @@ __all__ = [
     "compute_thickness_histogram",
     "compute_thickness_summary",
     "default_measurement_policy",
+    "inspect_strut_measurement",
     "list_out_of_spec_struts",
 ]

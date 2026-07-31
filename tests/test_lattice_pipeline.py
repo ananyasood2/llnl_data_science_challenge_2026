@@ -4,6 +4,7 @@ import numpy as np
 from scipy import ndimage
 
 from lattice_pipeline.align import bbox_match_alignment, refine_positions_to_skeleton
+from lattice_pipeline.cache import _semantic_analysis_fingerprint
 from lattice_pipeline.defects import DefectConfig, classify_defects
 from lattice_pipeline.segment import segment_with_metadata
 from lattice_pipeline.skeleton import analyze_skeleton, label_skeleton_components
@@ -11,6 +12,34 @@ from lattice_pipeline.validation import (
     evaluate_against_intentional_missing,
     mark_unreliable_boundary_faces,
 )
+
+
+def test_semantic_analysis_revision_qualifies_reusable_array_cache() -> None:
+    first = _semantic_analysis_fingerprint(
+        "array-cache-revision",
+        analysis_version=8,
+        voxel_size_mm=0.0252,
+    )
+    repeated = _semantic_analysis_fingerprint(
+        "array-cache-revision",
+        analysis_version=8,
+        voxel_size_mm=0.0252,
+    )
+    changed_science = _semantic_analysis_fingerprint(
+        "array-cache-revision",
+        analysis_version=9,
+        voxel_size_mm=0.0252,
+    )
+    changed_spacing = _semantic_analysis_fingerprint(
+        "array-cache-revision",
+        analysis_version=8,
+        voxel_size_mm=0.03,
+    )
+
+    assert first == repeated
+    assert first != "array-cache-revision"
+    assert changed_science != first
+    assert changed_spacing != first
 
 
 def test_otsu_uses_native_intensity_range() -> None:

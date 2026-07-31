@@ -12,12 +12,15 @@ from typing import Any, Sequence
 
 import numpy as np
 
+from lattice_pipeline.cache import ANALYSIS_VERSION
 from lattice_pipeline.measurements import (
+    DEFAULT_NEIGHBOR_LIMIT,
     build_thickness_map,
     compare_measurements_to_policy,
     compute_cutoff_sensitivity,
     compute_relative_density,
     compute_thickness_summary,
+    inspect_strut_measurement,
     list_out_of_spec_struts,
 )
 
@@ -26,6 +29,13 @@ from app.core.config import get_settings
 
 DATASET_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
 
+# Analysis v8 changed connectivity taxonomy and validation provenance, but did
+# not change the persisted EDT thickness values, registered strut geometry, or
+# segmentation mask consumed by this measurement repository. Keep v7 readable
+# for thickness/density workflows while refusing to qualify it for connectivity
+# conclusions. Review this explicit allow-list whenever ANALYSIS_VERSION moves.
+MEASUREMENT_COMPATIBLE_ANALYSIS_VERSIONS = frozenset({7, 8})
+
 
 class MeasurementDatasetNotFoundError(FileNotFoundError):
     """Raised when a dataset ID is not present in the configured catalog."""
@@ -33,6 +43,14 @@ class MeasurementDatasetNotFoundError(FileNotFoundError):
 
 class MeasurementPrerequisiteError(RuntimeError):
     """Raised when registered scientific artifacts are not qualified yet."""
+
+
+class MeasurementStrutNotFoundError(LookupError):
+    """Raised when a strut ID is absent from a qualified analysis revision."""
+
+
+class MeasurementAnalysisRevisionMismatchError(MeasurementPrerequisiteError):
+    """Raised when a caller attempts to combine evidence from two revisions."""
 
 
 @lru_cache(maxsize=8)
@@ -79,9 +97,22 @@ class MeasurementRepository:
         analysis_path, _ = self._paths(dataset_id)
         analysis = _read_analysis(str(analysis_path), analysis_path.stat().st_mtime_ns)
         meta = analysis.get("meta", {})
-        if not meta.get("cache_fingerprint") or not analysis.get("struts"):
+        if not meta.get("cache_fingerprint"):
             raise MeasurementPrerequisiteError(
-                "The analysis artifact does not contain a registered revision and strut measurements."
+                "The analysis artifact does not contain a registered revision."
+            )
+        analysis_version = meta.get("analysis_version")
+        if analysis_version not in MEASUREMENT_COMPATIBLE_ANALYSIS_VERSIONS:
+            raise MeasurementPrerequisiteError(
+                "The registered analysis is not compatible with the current measurement semantics "
+                f"(found version {analysis_version!r}, supported versions "
+                f"{sorted(MEASUREMENT_COMPATIBLE_ANALYSIS_VERSIONS)!r}; current full-analysis "
+                f"version {ANALYSIS_VERSION}). "
+                "Regenerate it with `npm run dev:structure -- --preprocess-only` before requesting measurements."
+            )
+        if not analysis.get("struts"):
+            raise MeasurementPrerequisiteError(
+                "The analysis artifact does not contain registered strut measurements."
             )
         voxel_size = meta.get("voxel_size_mm")
         if voxel_size is None or float(voxel_size) <= 0:
@@ -92,6 +123,44 @@ class MeasurementRepository:
 
     def revision(self, dataset_id: str) -> str:
         return str(self.analysis(dataset_id)["meta"]["cache_fingerprint"])
+
+    @staticmethod
+    def _resolve_strut(
+        analysis: dict[str, Any],
+        strut_id: int | str,
+    ) -> dict[str, Any]:
+        exact = [
+            record
+            for record in analysis["struts"]
+            if type(record.get("id")) is type(strut_id)
+            and record.get("id") == strut_id
+        ]
+        candidates = exact or [
+            record
+            for record in analysis["struts"]
+            if isinstance(record.get("id"), (int, str))
+            and str(record.get("id")) == str(strut_id)
+        ]
+        if not candidates:
+            raise MeasurementStrutNotFoundError(
+                f"Strut {strut_id!r} is not present in the registered analysis."
+            )
+        if len(candidates) > 1:
+            raise ValueError(
+                f"Strut identifier {strut_id!r} is ambiguous in the registered analysis."
+            )
+        return candidates[0]
+
+    def resolve_strut_id(self, dataset_id: str, strut_id: int | str) -> int | str:
+        """Validate a public element ID and return its persisted representation."""
+
+        record = self._resolve_strut(self.analysis(dataset_id), strut_id)
+        persisted = record.get("id")
+        if not isinstance(persisted, (int, str)):
+            raise MeasurementStrutNotFoundError(
+                f"Strut {strut_id!r} has no supported registered identifier."
+            )
+        return persisted
 
     @staticmethod
     def _registered_roi(
@@ -161,6 +230,17 @@ class MeasurementRepository:
         )
 
     @staticmethod
+    def _analysis_compatibility_warnings(analysis: dict[str, Any]) -> list[str]:
+        analysis_version = analysis["meta"].get("analysis_version")
+        if analysis_version == ANALYSIS_VERSION:
+            return []
+        return [
+            "Analysis version 7 is accepted for persisted thickness and relative-density measurements only. "
+            "It uses the legacy connectivity taxonomy (including `broken`) and must not be used for "
+            "version 8 connectivity conclusions."
+        ]
+
+    @staticmethod
     def _warnings(analysis: dict[str, Any]) -> list[str]:
         meta = analysis["meta"]
         warnings = [
@@ -179,7 +259,10 @@ class MeasurementRepository:
             warnings.append(
                 "The registered analysis flags at least one unreliable scan boundary; review boundary struts separately."
             )
-        return warnings
+        return [
+            *MeasurementRepository._analysis_compatibility_warnings(analysis),
+            *warnings,
+        ]
 
     def summary(
         self,
@@ -276,6 +359,55 @@ class MeasurementRepository:
             "dataset_id": dataset_id,
             "analysis_revision": self.revision(dataset_id),
             **compute_cutoff_sensitivity(analysis["struts"], cutoffs_um),
+        }
+
+    def strut_detail(
+        self,
+        dataset_id: str,
+        strut_id: int | str,
+        *,
+        expected_analysis_revision: str,
+        target_thickness_um: float = 350.0,
+        critical_cutoff_um: float = 300.0,
+        user_cutoff_um: float = 350.0,
+        neighbor_limit: int = DEFAULT_NEIGHBOR_LIMIT,
+    ) -> dict[str, Any]:
+        """Return revision-qualified evidence for one registered strut."""
+
+        analysis = self.analysis(dataset_id)
+        meta = analysis["meta"]
+        analysis_revision = str(meta["cache_fingerprint"])
+        if expected_analysis_revision != analysis_revision:
+            raise MeasurementAnalysisRevisionMismatchError(
+                "The requested analysis revision does not match the current registered "
+                "analysis. Refresh the measurement context and retry."
+            )
+        persisted_id = self._resolve_strut(analysis, strut_id).get("id")
+        try:
+            detail = inspect_strut_measurement(
+                analysis["struts"],
+                persisted_id,
+                target_um=target_thickness_um,
+                critical_cutoff_um=critical_cutoff_um,
+                user_cutoff_um=user_cutoff_um,
+                neighbor_limit=neighbor_limit,
+            )
+        except KeyError as exc:  # Defensive: resolution and calculation use one artifact.
+            raise MeasurementStrutNotFoundError(str(exc)) from exc
+        compatibility_warnings = self._analysis_compatibility_warnings(analysis)
+        return {
+            "dataset_id": dataset_id,
+            "analysis_revision": analysis_revision,
+            **detail,
+            "warnings": [*compatibility_warnings, *detail["warnings"]],
+            "provenance": {
+                "analysis_version": meta.get("analysis_version"),
+                "analysis_stride": meta.get("analysis_stride"),
+                "voxel_size_mm": meta.get("voxel_size_mm"),
+                "voxel_size_source": meta.get("voxel_size_source"),
+                "coordinate_space": "registered_voxel_xyz",
+                "topology_source": "persisted_strut_endpoint_node_ids",
+            },
         }
 
 

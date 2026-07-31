@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import argparse
 import math
+import re
 import sys
 from collections import OrderedDict
 from functools import lru_cache
 from pathlib import Path
 from threading import RLock
 from typing import Any
+from urllib.parse import parse_qs
 
 import numpy as np
 import plotly.graph_objects as go
@@ -74,6 +76,41 @@ _ANALYSES: OrderedDict[
     dict[str, Any],
 ] = OrderedDict()
 _ANALYSIS_LOCK = RLock()
+
+_EVIDENCE_QUERY_KEYS = (
+    "datasetId",
+    "analysisRevision",
+    "elementKind",
+    "elementId",
+)
+_SAFE_DATASET_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
+_SAFE_ANALYSIS_REVISION = re.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+)
+_SAFE_ELEMENT_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
+_EVIDENCE_SCROLL_CLIENTSIDE = """
+function(evidenceDetails, selected, hash, previousScroll) {
+    if (
+        !evidenceDetails ||
+        !selected ||
+        selected.source !== "evidence-deep-link" ||
+        hash !== "#evidence-panel"
+    ) {
+        return window.dash_clientside.no_update;
+    }
+    const token = `${selected.kind}:${String(selected.id)}`;
+    if (previousScroll === token) {
+        return window.dash_clientside.no_update;
+    }
+    window.requestAnimationFrame(function() {
+        document.getElementById("evidence-panel")?.scrollIntoView({
+            behavior: "smooth",
+            block: "start"
+        });
+    });
+    return token;
+}
+"""
 
 
 def _analysis(
@@ -528,6 +565,20 @@ def _selected_element(
     return (kind, item) if item is not None else None
 
 
+def _selection_reference(
+    selected: tuple[str, dict[str, Any]],
+    *,
+    evidence_deep_link: bool = False,
+) -> dict[str, Any]:
+    """Build the compact browser selection and mark validated evidence links."""
+
+    kind, item = selected
+    reference = {"kind": kind, "id": item["id"]}
+    if evidence_deep_link:
+        reference["source"] = "evidence-deep-link"
+    return reference
+
+
 def _nearest_element(
     analysis: dict[str, Any],
     kind: str,
@@ -588,6 +639,79 @@ def _element_by_id(
     if item is None:
         raise ValueError(f"No {kind} with ID {text} exists in this dataset.")
     return kind, item
+
+
+def _parse_evidence_deep_link(search: str | None) -> dict[str, str] | None:
+    """Parse a bounded evidence request from a Dash location search string."""
+
+    if not search:
+        return None
+    query = str(search).lstrip("?").split("#", 1)[0]
+    if len(query) > 2048:
+        raise ValueError("Evidence link query is too long.")
+    try:
+        values = parse_qs(
+            query,
+            keep_blank_values=True,
+            max_num_fields=32,
+        )
+    except ValueError as exc:
+        raise ValueError("Evidence link query is invalid.") from exc
+    if not any(key in values for key in _EVIDENCE_QUERY_KEYS):
+        return None
+
+    missing = [key for key in _EVIDENCE_QUERY_KEYS if key not in values]
+    if missing:
+        raise ValueError(
+            "Evidence link is incomplete; missing " + ", ".join(missing) + "."
+        )
+    duplicate = [key for key in _EVIDENCE_QUERY_KEYS if len(values[key]) != 1]
+    if duplicate:
+        raise ValueError(
+            "Evidence link contains repeated " + ", ".join(duplicate) + "."
+        )
+
+    request = {key: values[key][0].strip() for key in _EVIDENCE_QUERY_KEYS}
+    if not _SAFE_DATASET_ID.fullmatch(request["datasetId"]):
+        raise ValueError("Evidence link dataset ID is invalid.")
+    if not _SAFE_ANALYSIS_REVISION.fullmatch(request["analysisRevision"]):
+        raise ValueError("Evidence link analysis revision is invalid.")
+    if request["elementKind"] not in {"strut", "node"}:
+        raise ValueError("Evidence link element kind must be 'strut' or 'node'.")
+    if not _SAFE_ELEMENT_ID.fullmatch(request["elementId"]):
+        raise ValueError("Evidence link element ID is invalid.")
+    return request
+
+
+def _evidence_deep_link_selection(
+    search: str | None,
+    default_dataset: str,
+    analysis: dict[str, Any],
+) -> tuple[str, dict[str, Any]] | None:
+    """Resolve a revision-qualified evidence link against one fixed viewer."""
+
+    request = _parse_evidence_deep_link(search)
+    if request is None:
+        return None
+    if request["datasetId"] != default_dataset:
+        raise ValueError(
+            f"Evidence link dataset {request['datasetId']!r} does not match "
+            f"this viewer's {default_dataset!r} dataset."
+        )
+    current_revision = str(analysis.get("meta", {}).get("cache_fingerprint", ""))
+    if not current_revision:
+        raise ValueError("This viewer has no qualified analysis revision.")
+    if request["analysisRevision"] != current_revision:
+        raise ValueError(
+            "Evidence link analysis revision does not match the current "
+            "registered analysis. Refresh the measurement results before "
+            "opening evidence."
+        )
+    return _element_by_id(
+        analysis,
+        request["elementKind"],
+        request["elementId"],
+    )
 
 
 def _evidence_focus(
@@ -1825,7 +1949,9 @@ def create_app(default_dataset: str = "missing_struts") -> Dash:
 
     app.layout = html.Main(
         [
+            dcc.Location(id="viewer-location", refresh=False),
             dcc.Store(id="selected-element"),
+            dcc.Store(id="evidence-scroll-state"),
             html.Header(
                 [
                     html.Div(
@@ -2162,6 +2288,7 @@ def create_app(default_dataset: str = "missing_struts") -> Dash:
                         className="selection-details evidence-details",
                     ),
                 ],
+                id="evidence-panel",
                 className="model-panel verification-panel",
             ),
         ],
@@ -2173,17 +2300,18 @@ def create_app(default_dataset: str = "missing_struts") -> Dash:
         Output("lookup-feedback", "children"),
         Input("viewer", "clickData"),
         Input("inspect-element", "n_clicks"),
+        Input("viewer-location", "search"),
         State("lookup-kind", "value"),
         State("lookup-id", "value"),
         State("lookup-x", "value"),
         State("lookup-y", "value"),
         State("lookup-z", "value"),
         State("threshold-control", "value"),
-        prevent_initial_call=True,
     )
     def select_element(
         click_data: dict[str, Any] | None,
         _inspect_clicks: int | None,
+        location_search: str | None,
         kind: str,
         identifier: str | None,
         x: float | None,
@@ -2192,13 +2320,29 @@ def create_app(default_dataset: str = "missing_struts") -> Dash:
         threshold_value: float | None,
     ) -> tuple[dict[str, Any] | None, Any]:
         try:
+            opened_from_evidence_link = ctx.triggered_id in {
+                None,
+                "viewer-location",
+            }
             threshold = None if threshold_value is None else float(threshold_value)
             analysis = _analysis(
                 default_dataset,
                 float(config["voxel_size_mm"]),
                 threshold,
             )
-            if ctx.triggered_id == "viewer":
+            if opened_from_evidence_link:
+                selected = _evidence_deep_link_selection(
+                    location_search,
+                    default_dataset,
+                    analysis,
+                )
+                if selected is None:
+                    return (
+                        None,
+                        "You can also click a node or strut in the 3D view.",
+                    )
+                distance_text = " · opened from a revision-qualified evidence link"
+            elif ctx.triggered_id == "viewer":
                 selected = _clicked_element(analysis, click_data)
                 if selected is None:
                     raise ValueError("Click a registered node or strut trace.")
@@ -2214,8 +2358,12 @@ def create_app(default_dataset: str = "missing_struts") -> Dash:
                 selected, distance = _nearest_element(analysis, kind, [x, y, z])
                 distance_text = f" · {distance:.2f} voxels from entered position"
             selected_kind, item = selected
+            selected_reference = _selection_reference(
+                selected,
+                evidence_deep_link=opened_from_evidence_link,
+            )
             return (
-                {"kind": selected_kind, "id": item["id"]},
+                selected_reference,
                 html.Span(
                     [
                         html.Strong(
@@ -2333,6 +2481,16 @@ def create_app(default_dataset: str = "missing_struts") -> Dash:
             figure = _empty_figure(message)
             figure.update_layout(height=500)
             return figure, [html.Span(message, className="error-message")]
+
+    app.clientside_callback(
+        _EVIDENCE_SCROLL_CLIENTSIDE,
+        Output("evidence-scroll-state", "data"),
+        Input("evidence-details", "children"),
+        State("selected-element", "data"),
+        State("viewer-location", "hash"),
+        State("evidence-scroll-state", "data"),
+        prevent_initial_call=True,
+    )
 
     @app.callback(
         Output("threshold-control", "value"),

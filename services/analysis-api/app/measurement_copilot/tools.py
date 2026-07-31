@@ -14,6 +14,7 @@ from app.core.config import get_settings
 from app.repositories.measurements import (
     MeasurementDatasetNotFoundError,
     MeasurementPrerequisiteError,
+    MeasurementStrutNotFoundError,
     measurement_repository,
 )
 
@@ -50,7 +51,12 @@ def create_measurement_context(
             visible_statuses=visible_statuses or [],
         )
         revision = measurement_repository.revision(payload.dataset_id)
-    except MeasurementDatasetNotFoundError as exc:
+        if payload.selected_strut_id is not None:
+            payload.selected_strut_id = measurement_repository.resolve_strut_id(
+                payload.dataset_id,
+                payload.selected_strut_id,
+            )
+    except (MeasurementDatasetNotFoundError, MeasurementStrutNotFoundError) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except MeasurementPrerequisiteError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -191,6 +197,76 @@ def list_out_of_spec_struts(
     )
 
 
+def inspect_selected_strut(context_id: str) -> dict[str, Any]:
+    """Inspect only the strut captured by the immutable measurement context."""
+
+    context = _context(context_id)
+    if context.selected_strut_id is None:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "The measurement context has no selected_strut_id. Select a registered "
+                "strut and create a new context before inspecting it."
+            ),
+        )
+    try:
+        result = measurement_repository.strut_detail(
+            context.dataset_id,
+            context.selected_strut_id,
+            expected_analysis_revision=context.analysis_revision,
+            target_thickness_um=context.target_thickness_um,
+            critical_cutoff_um=context.critical_cutoff_um,
+            user_cutoff_um=context.user_cutoff_um,
+        )
+    except MeasurementStrutNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except MeasurementPrerequisiteError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    neighbors = result["neighbors"]
+    selected_id = result["strut"]["strut_id"]
+    return _envelope(
+        context,
+        "inspect_selected_strut",
+        "Thickness Analysis Agent",
+        {
+            "unit": result["unit"],
+            "method": result["method"],
+            "method_version": result["method_version"],
+            "eligibility_rule": result["eligibility_rule"],
+            "eligible_strut_count": result["eligible_strut_count"],
+            "excluded_strut_count": result["excluded_strut_count"],
+            "strut": result["strut"],
+            "neighbors": {
+                key: value for key, value in neighbors.items() if key != "struts"
+            },
+        },
+        elements=[
+            {
+                "element_role": "selected",
+                "strut_id": result["strut"]["strut_id"],
+                "analysis_status": result["strut"]["analysis_status"],
+                "measured_thickness_um": result["strut"]["measured_thickness_um"],
+                "design_thickness_um": result["strut"]["design_thickness_um"],
+            },
+            *[
+                {"element_role": "neighbor", **neighbor}
+                for neighbor in neighbors["struts"][:49]
+            ],
+        ],
+        evidence=[
+            {
+                "kind": "viewer_action",
+                "action": "highlight_struts",
+                "strut_ids": [selected_id],
+            }
+        ],
+        warnings=result["warnings"],
+    )
+
+
 def get_relative_density(context_id: str) -> dict[str, Any]:
     context = _context(context_id)
     result = _summary(context)
@@ -327,6 +403,7 @@ TOOL_REGISTRY: dict[str, ToolFunction] = {
     "get_measurement_context": get_measurement_context,
     "get_thickness_summary": get_thickness_summary,
     "list_out_of_spec_struts": list_out_of_spec_struts,
+    "inspect_selected_strut": inspect_selected_strut,
     "get_relative_density": get_relative_density,
     "compare_measurements_to_design": compare_measurements_to_design,
     "analyze_measurement_sensitivity": analyze_measurement_sensitivity,

@@ -1,4 +1,7 @@
-import { getStructureViewerUrl } from "./viewerConfig";
+import {
+  getStructureViewerUrl,
+  parseStructureEvidenceParams,
+} from "./viewerConfig";
 import { StructureViewerFrame } from "./StructureViewerFrame";
 
 type StructureAnalysisPageProps = {
@@ -23,8 +26,10 @@ export default async function StructureAnalysisPage({
   searchParams,
 }: StructureAnalysisPageProps) {
   const params = searchParams ? await searchParams : {};
+  const evidenceParams = parseStructureEvidenceParams(params);
   const viewerUrl = getStructureViewerUrl(
     process.env.NEXT_PUBLIC_STRUCTURE_VIEWER_URL,
+    evidenceParams,
   );
   const datasetId = getParam(params, "datasetId", "");
   const threshold = getParam(params, "threshold", "Not provided");
